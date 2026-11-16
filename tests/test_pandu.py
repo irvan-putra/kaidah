@@ -269,6 +269,30 @@ class DueSent(Base):
         c, o = run("due", "--sent-file", self.f, "--mark-attempt", k); self.assertEqual(c, 0); self.assertIn("unchanged", o)
         c, o = run("due", "--sent-file", self.f, "--mark-sent", k, "--mark-attempt", k); self.assertNotEqual(c, 0)
 
+    def test_seen_in_chat_holds_a_pending_key_and_never_marks_it_sent(self):
+        n = self.due(); ka, kb = n[0]["key"], n[1]["key"]
+        chat = os.path.join(self.d.name, "..", "chat-" + os.path.basename(self.d.name) + ".txt"); chat = os.path.abspath(chat)
+        self.addCleanup(lambda: os.path.exists(chat) and os.remove(chat))
+        with open(chat, "w") as f:
+            f.write(f"hello\ndraft: something (ref {ka})\nnot a ref: ({ka})\nprefix (ref {kb[:-1]})\n")
+        c, o = run("due", "--format", "json", "--sent-file", self.f, "--seen-in", chat); self.assertEqual(c, 0, o)
+        d = json.loads(o)
+        self.assertEqual([x["key"] for x in d["uncertain"]], [ka])
+        self.assertIn("chat export", d["uncertain"][0]["reason"])
+        self.assertEqual([x["key"] for x in d["notices"]], [kb])  # the partial text did not match
+        self.assertFalse(os.path.exists(self.f))  # nothing was recorded, least of all a delivery
+        self.assertIn("UNCERTAIN", run("due", "--sent-file", self.f, "--seen-in", chat)[1])
+        run("due", "--sent-file", self.f, "--mark-sent", ka)  # a real delivery, recorded by a person
+        d = json.loads(run("due", "--format", "json", "--sent-file", self.f, "--seen-in", chat)[1])
+        self.assertEqual(d["uncertain"], [])
+        # the safety check fails closed
+        self.assertNotEqual(run("due", "--sent-file", self.f, "--seen-in", chat + ".missing")[0], 0)
+        os.symlink(chat, chat + ".lnk"); self.addCleanup(os.remove, chat + ".lnk")
+        self.assertNotEqual(run("due", "--sent-file", self.f, "--seen-in", chat + ".lnk")[0], 0)
+        with open(chat, "wb") as f:
+            f.write(b"\xff\xfe")
+        self.assertNotEqual(run("due", "--sent-file", self.f, "--seen-in", chat)[0], 0)
+
     def test_a_corrected_date_is_a_new_notice(self):
         k = self.due()[0]["key"]; run("due", "--sent-file", self.f, "--mark-sent", k)
         run("correct", self.a, "--expires", "2026-06-11"); run("correct", self.b, "--expires", "2026-06-20")
@@ -400,6 +424,18 @@ class Checkpoint(Base):
         self.assertEqual(run("checkpoint", "covers", os.path.join(self.base, "cp3.json"), "--sent-file", self.sent, "--key", k2)[0], 0)
         self.add("work", "new event")  # a new event makes the old checkpoint stale too
         self.assertNotEqual(run("checkpoint", "covers", os.path.join(self.base, "cp3.json"), "--sent-file", self.sent)[0], 0)
+
+    def test_min_records_refuses_an_older_copy(self):
+        run("checkpoint", "export", self.cp, "--sent-file", self.sent)  # 1 record line
+        run("due", "--sent-file", self.sent, "--mark-sent", self.key)
+        cp2 = os.path.join(self.base, "cp2.json"); run("checkpoint", "export", cp2, "--sent-file", self.sent)  # 2 lines
+        self.assertIn("2 sent record line", run("checkpoint", "verify", cp2)[1])
+        old = os.path.join(self.base, "old-log"); s1 = os.path.join(self.base, "old-sent.txt")
+        c, o = run("checkpoint", "restore", self.cp, "--into", old, "--sent-file", s1, "--min-records", "2")
+        self.assertNotEqual(c, 0); self.assertIn("older than your last known state", o)
+        self.assertFalse(os.path.exists(old)); self.assertFalse(os.path.exists(s1))
+        ok = os.path.join(self.base, "ok-log"); s2 = os.path.join(self.base, "ok-sent.txt")
+        self.assertEqual(run("checkpoint", "restore", cp2, "--into", ok, "--sent-file", s2, "--min-records", "2")[0], 0)
 
     def test_damaged_or_foreign_checkpoints_fail_closed(self):
         run("checkpoint", "export", self.cp, "--sent-file", self.sent)

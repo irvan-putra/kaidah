@@ -743,12 +743,15 @@ def cmd_checkpoint(a):
     elif a.action == "verify":
         events, sent = checkpoint_load(a.file)
         st = parse_sent_text(sent, "sent")
-        print(f"ok: {len(events)} event(s), {len(fold(events))} entr(ies), sent record: "
+        print(f"ok: {len(events)} event(s), {len(fold(events))} entr(ies), {sent.count(chr(10))} sent record line(s), sent record: "
               f"{sum(v == 'sent' for v in st.values())} delivered, {sum(v == 'uncertain' for v in st.values())} uncertain")
     else:  # restore
         events, sent = checkpoint_load(a.file)
         if not a.into:
             die("restore needs --into DIR")
+        if a.min_records is not None and sent.count("\n") < a.min_records:
+            die(f"this checkpoint has {sent.count(chr(10))} sent record line(s), fewer than the {a.min_records} you last "
+                "knew about. It is older than your last known state, so it was not restored. Nothing was changed")
         if sent and not a.sent_file:
             die("this checkpoint carries a sent record, and restoring without --sent-file would drop it "
                 "and could repeat notices. Add --sent-file PATH. Nothing was changed")
@@ -955,6 +958,23 @@ def append_sent_keys(path, keys, how="sent"):
     return len(new), len(set(keys)) - len(new)
 
 
+SEEN_RE = re.compile(r"\(ref ([0-9a-f]{8,32}:\d{4}-\d{2}-\d{2}:(?:upcoming|due|expired))\)")
+
+
+def read_seen_keys(path):
+    """Notice keys that appear as '(ref KEY)' in a text export of the chat. Appearing in the text is not
+    proof of delivery (it may be a draft, a quote or a paste), so these keys are only ever held back,
+    never marked sent. A missing, unreadable or symlinked file stops the command, because an empty
+    answer would quietly turn the safety check off."""
+    if os.path.islink(path) or not os.path.isfile(path):
+        die(f"{path} is not a readable plain file; nothing was changed")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return set(SEEN_RE.findall(f.read()))
+    except (OSError, UnicodeDecodeError) as e:
+        die(f"cannot read {path} as text ({e}); nothing was changed")
+
+
 def cmd_due(a):
     """List the expiry notices that are due, with stable idempotency keys. Read-only: it sends
     nothing and writes nothing. A scheduler or a person delivers each key once and keeps its own
@@ -970,6 +990,7 @@ def cmd_due(a):
         print(f"recorded {added} ({acts[0][1]}), {skipped} unchanged")
         return
     sent = read_sent_state(a.sent_file) if a.sent_file else {}
+    seen = read_seen_keys(a.seen_in) if a.seen_in else set()
     uncertain = []
     today = today_date()
     out = []
@@ -997,7 +1018,10 @@ def cmd_due(a):
         if st == "sent":
             continue
         if st == "uncertain":
-            uncertain.append({"key": key, "text": text})  # an attempt with no confirmed outcome: do not resend
+            uncertain.append({"key": key, "text": text, "reason": "attempt recorded, outcome unknown"})
+            continue  # do not resend
+        if key in seen:  # its text is in the chat export, but the record does not say sent: hold it, do not resend
+            uncertain.append({"key": key, "text": text, "reason": "its text appears in the chat export, delivery not recorded"})
             continue
         out.append({"key": key, "entry": i, "phase": phase, "expires": str(d), "text": text,
                     "message": f"{text}\n(ref {key})"})
@@ -1006,7 +1030,7 @@ def cmd_due(a):
         print(json.dumps({"today": str(today), "notices": out, "uncertain": uncertain}, indent=1))
     else:
         for x in uncertain:
-            print(f"UNCERTAIN {x['key']}\tsend attempted, outcome unknown: check the chat, then --mark-sent or --clear-attempt")
+            print(f"UNCERTAIN {x['key']}\t{x['reason']}: check the chat, then --mark-sent or --clear-attempt")
         for x in out:
             print(f"{x['key']}\t{x['text']}")
         if not out and not uncertain:
@@ -1216,13 +1240,15 @@ def main(argv=None):
     x.add_argument("--format", choices=("text", "json"), default="text")
     x.add_argument("--within", type=int, default=0, help="also list grants expiring within this many days")
     x.add_argument("--sent-file", help="file of already delivered keys, one per line; those are skipped")
+    x.add_argument("--seen-in", help="text export of the chat; a pending key whose unchanged one-line '(ref KEY)' appears there is held as uncertain (no match proves nothing)")
     x.add_argument("--mark-attempt", nargs="+", metavar="KEY", help="record, BEFORE sending, that a send is starting")
     x.add_argument("--mark-sent", nargs="+", metavar="KEY", help="record that delivery was confirmed")
     x.add_argument("--clear-attempt", nargs="+", metavar="KEY", help="record that an attempt is confirmed not delivered")
     x.set_defaults(f=cmd_due)
     x = sp.add_parser("checkpoint", help="export, verify or restore the log and sent record as one file (plain text; encrypt it)")
     x.add_argument("action", choices=("export", "verify", "restore", "covers")); x.add_argument("file")
-    x.add_argument("--sent-file"); x.add_argument("--into"); x.add_argument("--key"); x.set_defaults(f=cmd_checkpoint)
+    x.add_argument("--sent-file"); x.add_argument("--into"); x.add_argument("--key")
+    x.add_argument("--min-records", type=int, help="refuse a copy whose sent record has fewer lines than this (counts only; see checkpoint.md)"); x.set_defaults(f=cmd_checkpoint)
     x = sp.add_parser("scaffold", help="write the files for a public data repository (commits nothing)")
     x.add_argument("dir"); x.add_argument("--pandu-ref", required=True, dest="pandu_ref"); x.set_defaults(f=cmd_scaffold)
     x = sp.add_parser("init", help="set this log's visibility (default is private)")
