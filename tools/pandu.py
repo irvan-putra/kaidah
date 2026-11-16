@@ -738,6 +738,42 @@ def cmd_outbox(a):
             print("nothing to report")
 
 
+def cmd_due(a):
+    """List the expiry notices that are due, with stable idempotency keys. Read-only: it sends
+    nothing and writes nothing. A scheduler or a person delivers each key once and keeps its own
+    record of what was delivered. The log is an index; the original grant stays the authority."""
+    today = today_date()
+    out = []
+    for i, en in fold().items():
+        d = parse_date(en.get("expires"))
+        if not d or en["status"] not in ("open", "expired") or en.get("kind") != "agreed":
+            continue
+        days = (d - today).days
+        if days < 0:
+            phase = "expired"
+        elif days == 0:
+            phase = "due"
+        elif days <= a.within:
+            phase = "upcoming"
+        else:
+            continue
+        title = en.get("title", i)
+        text = {"expired": f"Grant expired on {d}: {title} (ref {i}). The log records this only; check that access is really removed.",
+                "due": f"Grant expires today: {title} (ref {i}).",
+                "upcoming": f"Grant expires in {days} day(s), on {d}: {title} (ref {i})."}[phase]
+        # the key names the entry, the expiry date and the phase, so a correction that moves the
+        # date gives a new key and a repeat run gives the same key
+        out.append({"key": f"{i}:{d}:{phase}", "entry": i, "phase": phase, "expires": str(d), "text": text})
+    out.sort(key=lambda x: (x["expires"], x["key"]))
+    if a.format == "json":
+        print(json.dumps({"today": str(today), "notices": out}, indent=1))
+    else:
+        for x in out:
+            print(f"{x['key']}\t{x['text']}")
+        if not out:
+            print("nothing due")
+
+
 # ---- status page ----
 def sections(entries):
     vals = list(entries.values())
@@ -937,6 +973,9 @@ def main(argv=None):
     x = sp.add_parser("outbox", help="format unreported changes as plain-text messages (sends nothing)")
     x.add_argument("--format", choices=("text", "json"), default="text")
     x.add_argument("--mark-sent", action="store_true", help="after delivery, record these as reported"); x.set_defaults(f=cmd_outbox)
+    x = sp.add_parser("due", help="list expiry notices that are due, with idempotency keys (read-only)")
+    x.add_argument("--format", choices=("text", "json"), default="text")
+    x.add_argument("--within", type=int, default=0, help="also list grants expiring within this many days"); x.set_defaults(f=cmd_due)
     x = sp.add_parser("scaffold", help="write the files for a public data repository (commits nothing)")
     x.add_argument("dir"); x.add_argument("--pandu-ref", required=True, dest="pandu_ref"); x.set_defaults(f=cmd_scaffold)
     x = sp.add_parser("init", help="set this log's visibility (default is private)")

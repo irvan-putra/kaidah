@@ -194,6 +194,33 @@ class Outbox(Base):
         self.assertEqual(os.stat(os.path.join(self.d.name, "sent.txt")).st_mode & 0o777, 0o600)
 
 
+class Due(Base):
+    def test_due_notices_are_stable_read_only_and_follow_corrections(self):
+        os.environ["PANDU_TEST_MODE"] = "1"; os.environ["PANDU_TODAY"] = "2026-06-10"
+        a = self.add("agreed", "Grant A", "--evidence", "x", "--expires", "2026-06-10")
+        b = self.add("agreed", "Grant B", "--evidence", "x", "--expires", "2026-06-12")
+        self.add("agreed", "No expiry", "--evidence", "x")
+        self.add("work", "Not a grant")
+        n = len(os.listdir(os.path.join(self.d.name, "events")))
+        def due(*x):
+            c, o = run("due", "--format", "json", *x); self.assertEqual(c, 0, o); return json.loads(o)["notices"]
+        d1 = due()
+        self.assertEqual([(x["entry"], x["phase"]) for x in d1], [(a, "due")])
+        self.assertEqual(due(), d1)  # same input, same keys
+        up = due("--within", "3")
+        self.assertEqual([x["phase"] for x in up], ["due", "upcoming"])
+        self.assertEqual(len(os.listdir(os.path.join(self.d.name, "events"))), n)  # writes nothing
+        run("correct", b, "--expires", "2026-06-20")
+        self.assertEqual(len(due("--within", "3")), 1)
+        os.environ["PANDU_TODAY"] = "2026-06-11"
+        e1 = due(); self.assertEqual([(x["entry"], x["phase"]) for x in e1], [(a, "expired")])
+        run("sweep")  # sweeping must not drop or change the notice
+        self.assertEqual(due(), e1)
+        run("resolve", a, "revoked")  # an explicitly closed grant is no longer due
+        self.assertEqual(due(), [])
+        c, o = run("due"); self.assertEqual(o.strip(), "nothing due")
+
+
 class Visibility(Base):
     def public(self, *deny):
         args = ["init", "--visibility", "public"]

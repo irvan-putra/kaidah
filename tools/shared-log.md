@@ -83,3 +83,9 @@ Scope: this records expiry in the log only. It creates no entries, approves noth
     python3 /path/to/pandu/tools/pandu.py sweep
     python3 /path/to/pandu/tools/pandu.py sync --message "Record expired grants"
     python3 /path/to/pandu/tools/pandu.py check
+
+## Expiry notices for a scheduler
+
+`pandu due` lists the grants whose expiry is today (`due`), already past (`expired`), or within `--within` days (`upcoming`). Each has a stable `key` of the form `entry:expiry-date:phase`. The same log gives the same keys, a correction that moves the date gives a new key, and sweeping a grant does not drop its `expired` notice. It reads only and sends nothing.
+
+Whoever delivers the notices (a scheduler, an agent or a person) must keep its own record of delivered keys and skip keys it already sent. Pandu does not keep that record, and a chat message is a notice, not a store. The log is an index only. The original grant stays the authority, and `expired` means the log says so, not that access is really removed.
