@@ -16,6 +16,7 @@ These notes grew from one person's experience working with an AI assistant on so
 
 - [Delta Chat as an assistant channel](docs/research/deltachat-as-an-assistant-channel.md) - source-based exploration with version and relay caveats.
 - [Delta Chat second-device transfer](docs/research/deltachat-second-device-transfer.md) - a reading of the transfer code and docs; not tested end to end.
+- [What one public chatmail relay says about retention and deletion](docs/research/chatmail-relay-retention-and-account-lifetime.md) - one relay’s published policy, with an unresolved retention discrepancy; no private account inspected.
 
 ## How to use it
 
