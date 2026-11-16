@@ -16,6 +16,9 @@ These notes grew from one person's experience working with an AI assistant on so
 
 - [Delta Chat as an assistant channel](docs/research/deltachat-as-an-assistant-channel.md) - source-based exploration with version and relay caveats.
 - [Delta Chat second-device transfer](docs/research/deltachat-second-device-transfer.md) - a reading of the transfer code and docs; not tested end to end.
+- [Delta Chat key management, as the official FAQ states it](docs/research/delta-chat-keys-and-moving-an-account.md) - FAQ reading; no keys were inspected or moved.
+- [Delta Chat on Android: invite links and intent filters](docs/research/delta-chat-android-invite-links-and-intent-filters.md) - pinned source reading only; nothing was installed or run.
+- [Delta Chat core system messages use display names](docs/research/delta-chat-core-system-messages-use-display-names.md) - source reading; display labels are not treated as authenticated identifiers.
 - [What one public chatmail relay says about retention and deletion](docs/research/chatmail-relay-retention-and-account-lifetime.md) - one relay’s published policy, with an unresolved retention discrepancy; no private account inspected.
 
 ## How to use it
