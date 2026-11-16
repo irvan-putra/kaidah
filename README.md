@@ -14,6 +14,9 @@ These notes grew from one person's experience working with an AI assistant on so
 - [A version-update pattern for a chat-bot-delivered mini app](docs/research/pixelsocial-version-update-pattern.md) - a dated source-reading snapshot of PixelSocial and its bot; re-check before relying on current behavior.
 - [Tools that could help](tools.md): proposals for coordinating shared work, plus a small [command line tool](tools/README.md) that implements them
 
+- [Delta Chat as an assistant channel](docs/research/deltachat-as-an-assistant-channel.md) - source-based exploration with version and relay caveats.
+- [Delta Chat second-device transfer](docs/research/deltachat-second-device-transfer.md) - a reading of the transfer code and docs; not tested end to end.
+
 ## How to use it
 
 Read the practices, copy the ones that fit, and change the rest. Open an issue or pull request if you have a better rule.
