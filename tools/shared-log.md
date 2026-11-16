@@ -43,24 +43,43 @@ Automation is limited to what needs no judgment: `sweep`, `sync` for a public lo
 
 Recording an expiry does not remove access. That is a separate step done where the access was granted (repository settings, a shared folder, a token). The status page lists such grants under "Expired: access removal not confirmed" until someone removes the access and runs `pandu resolve ID revoked --note "..."`. Automating the removal itself would need an adapter per service, with credentials that are allowed to remove that exact access. This tool has none.
 
-## A scheduled job in the data repo (example, not enabled anywhere)
+## Setting up a public data repository
 
-    name: sweep
-    on:
-      schedule: [{cron: "17 2 * * *"}]
-      workflow_dispatch:
-    permissions: {contents: write}
-    jobs:
-      sweep:
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v4
-          - run: git clone --depth 1 https://github.com/OWNER/pandu /tmp/pandu
-          - run: |
-              git config user.name "pandu sweep"
-              git config user.email "sweep@users.noreply.github.com"
-              export PANDU_DIR=.
-              python3 /tmp/pandu/tools/pandu.py sweep
-              python3 /tmp/pandu/tools/pandu.py sync --message "Record expired grants"
+`pandu scaffold DIR --pandu-ref FULL_COMMIT_HASH` writes the starting files into an empty directory (only `.git` may exist) of a dedicated public repository, and commits nothing. It refuses to overwrite anything, and the repository starts with no entries:
 
-Pin the clone to a commit you have reviewed. The job only adds files under `events/` in the data repo.
+- `README.md`: says it is a curated public log, that nothing private is recorded, and that the expiry job removes no access.
+- `pandu.json`: `{"visibility": "public"}`.
+- `.gitignore`: keeps the local-only files out.
+- `.github/workflows/sweep.yml`: the scheduled job below.
+
+Review the files, commit them, then add entries with `--public-ok` from your own machine and `pandu sync`. `sync` accepts only this data-only layout, so the repository cannot carry other files.
+
+## The scheduled expiry job
+
+The workflow runs once a day (04:17 Jakarta time) and on manual dispatch. It does only deterministic work:
+
+1. Check out the repository with full history.
+2. Fetch the pandu code at the pinned full commit hash and fail unless the hash matches. The reviewed code is never fetched from a branch name.
+3. Run the pinned code's tests.
+4. `sweep` (records expiry only), then `sync` (verifies the full event graph, the data-only history and the public rules before it pushes), then `check`.
+
+Details that matter:
+
+- It uses no stored secrets. GitHub still gives every job an automatic write token (limited here to `contents: write`). The checkout does not keep it. Only the push step gets it, as a temporary git header, so the pinned code and its tests run without it. The pinned pandu code does run in the push step with that token, so pin only code you have reviewed. `actions/checkout` is pinned to a commit hash, and runs are serialized by a concurrency group.
+- The workflow file holds that write token, so `sync` accepts only the reviewed template, where only the pinned commit hash may differ. It checks the working file and every historic version, and refuses a changed file, a removed file or an unpinned hash. Updating the pin is a change of that one line.
+- Anyone with write access to the data repository can edit the workflow itself, and GitHub will run that edited file. The pandu checks only stop `sync` from pushing it. Keep the repository single-owner, with no other writers, and treat this as a host trust boundary.
+- Two runs on the same day produce identical files, so they cannot conflict. Running again the same day changes nothing.
+- `check` exits 1 for a conflict or an expired grant that is still open, so the run turns red and GitHub shows it as failed. The job does not notify anyone by itself.
+- Dates use the Jakarta calendar date (`TZ` is set in the job).
+- Commits made by the job are authored by `github-actions[bot]`, so they are visibly automated.
+- The deny strings live only on your machine, so the job cannot apply them. It still applies the data-only history rules and all public rules that need no deny list.
+- To use a newer pandu, review it, then change the pinned hash in the workflow by hand.
+
+Scope: this records expiry in the log only. It creates no entries, approves nothing, sends nothing and removes no real access.
+
+## The same job as plain commands
+
+    export PANDU_DIR=.
+    python3 /path/to/pandu/tools/pandu.py sweep
+    python3 /path/to/pandu/tools/pandu.py sync --message "Record expired grants"
+    python3 /path/to/pandu/tools/pandu.py check

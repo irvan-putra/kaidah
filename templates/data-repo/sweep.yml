@@ -1,0 +1,61 @@
+name: sweep
+
+# Records expired grants in the log once a day. It only records the expiry; it removes no access.
+# Uses no stored secrets (no secrets context). GitHub gives every job an automatic token; here it is limited to
+# contents: write and is handed only to the push step, as a temporary git header.
+on:
+  schedule:
+    - cron: "17 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pandu-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # actions/checkout v7.0.1, pinned to its commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the pinned, reviewed pandu code
+        env:
+          PANDU_REF: __PANDU_REF__
+        run: |
+          git init -q /tmp/pandu
+          git -C /tmp/pandu fetch -q --depth 1 https://github.com/irvan-putra/pandu "$PANDU_REF"
+          git -C /tmp/pandu checkout -q FETCH_HEAD
+          test "$(git -C /tmp/pandu rev-parse HEAD)" = "$PANDU_REF"
+      - name: Test the pinned code
+        run: python3 -m unittest discover -s /tmp/pandu/tests
+      - name: Record expiries (no token)
+        env:
+          PANDU_DIR: .
+          TZ: Asia/Jakarta
+        run: python3 /tmp/pandu/tools/pandu.py sweep
+      - name: Verify and push (the only step with the token)
+        env:
+          PANDU_DIR: .
+          TZ: Asia/Jakarta
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 /tmp/pandu/tools/pandu.py sync --message "Record expired grants"
+      - name: Check for conflicts and open expired grants (no token)
+        env:
+          PANDU_DIR: .
+          TZ: Asia/Jakarta
+        run: python3 /tmp/pandu/tools/pandu.py check

@@ -466,11 +466,28 @@ def git(*args, check=True):
 
 
 ALLOWED_PATHS = (re.compile(r"^events/[0-9a-f]{12,16}\.json$"), re.compile(r"^pandu\.json$"),
-                 re.compile(r"^\.gitignore$"), re.compile(r"^README\.md$"))
+                 re.compile(r"^\.gitignore$"), re.compile(r"^README\.md$"),
+                 re.compile(r"^\.github/workflows/sweep\.yml$"))
 
 
 def path_ok(p):
     return any(r.match(p) for r in ALLOWED_PATHS)
+
+
+WORKFLOW = ".github/workflows/sweep.yml"
+REF_LINE = re.compile(r"(PANDU_REF: )[0-9a-f]{40}$", re.M)
+
+
+def workflow_problem(text):
+    """The workflow holds a write token, so it must be the reviewed template exactly. Only the
+    pinned pandu commit hash may differ. Returns a problem string or None."""
+    if len(REF_LINE.findall(text)) != 1:
+        return "it has no single pinned 40-character pandu commit hash"
+    with open(os.path.join(TEMPLATE_DIR, "data-repo", "sweep.yml"), encoding="utf-8") as f:
+        want = f.read()
+    if REF_LINE.sub(r"\1__PANDU_REF__", text) != want:
+        return "it differs from the reviewed template"
+    return None
 
 
 def deny_hits(text):
@@ -493,6 +510,12 @@ def check_history(rev, public):
                 "repository, so nothing was pushed. Use a fresh repository.")
         if path.startswith("events/") and status != "A":
             die(f"history of {rev} edits or removes event file '{path}'. Nothing was pushed.")
+        if path == WORKFLOW:
+            if new.strip("0") == "":
+                die(f"history of {rev} removes the workflow file. Nothing was pushed.")
+            bad = workflow_problem(git("cat-file", "-p", new).stdout)
+            if bad:
+                die(f"history of {rev} has a workflow that is not the reviewed template: {bad}. Nothing was pushed.")
         if not public or new.strip("0") == "":
             continue
         blob = git("cat-file", "-p", new).stdout
@@ -530,6 +553,16 @@ def verify_tree_and_history(public, rev="HEAD"):
     for p in tracked:
         if not path_ok(p):
             die(f"'{p}' is tracked but is not pandu data. Nothing was pushed.")
+    wf = os.path.join(data_dir(), WORKFLOW)
+    if os.path.lexists(wf):
+        if os.path.islink(wf) or not os.path.isfile(wf):
+            die("the workflow file is not a plain file. Nothing was pushed.")
+        with open(wf, encoding="utf-8") as f:
+            bad = workflow_problem(f.read())
+        if bad:
+            die(f"the workflow file is not the reviewed template: {bad}. Nothing was pushed.")
+    elif WORKFLOW in tracked:
+        die("the workflow file was removed. Nothing was pushed.")
     if git("rev-parse", "--verify", "-q", rev, check=False).returncode == 0:
         check_history(rev, public)
         if public:
@@ -582,6 +615,47 @@ def cmd_sync(a):
             print(f"synced (attempt {attempt})")
             return
     die("push kept being rejected after 5 attempts; try again")
+
+
+# ---- scaffold a public data repository (files only, nothing is committed or pushed) ----
+SCAFFOLD = (("README.md", "README.md"), ("pandu.json", "pandu.json"), ("gitignore", ".gitignore"),
+            ("sweep.yml", ".github/workflows/sweep.yml"))
+
+
+def cmd_scaffold(a):
+    if not re.match(r"^[0-9a-f]{40}$", a.pandu_ref):
+        die("--pandu-ref must be the full 40-character commit hash of reviewed pandu code")
+    d = a.dir
+    if os.path.islink(d):
+        die(f"{d} is a symlink; nothing was written")
+    if os.path.lexists(d):
+        if not os.path.isdir(d):
+            die(f"{d} is not a directory; nothing was written")
+        extra = [n for n in os.listdir(d) if n != ".git"]
+        if extra:
+            die(f"{d} is not empty (found {extra[0]}); use an empty directory. Nothing was written")
+        g = os.path.join(d, ".git")
+        if os.path.lexists(g) and (os.path.islink(g) or not os.path.isdir(g)):
+            die(f"{g} is not a plain directory; nothing was written")
+    src = os.path.join(TEMPLATE_DIR, "data-repo")
+    staged = []  # read and build every file first, so a failure writes nothing
+    for name, dest in SCAFFOLD:
+        with open(os.path.join(src, name), encoding="utf-8") as f:
+            staged.append((os.path.join(d, dest), f.read().replace("__PANDU_REF__", a.pandu_ref)))
+    done = []
+    try:
+        for p, text in staged:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+            done.append(p)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+    except OSError as e:
+        for p in done:
+            os.remove(p)
+        die(f"could not write the files ({e}); the partial files were removed")
+    for p, _ in staged:
+        print("wrote " + p)
 
 
 # ---- outbox: plain-text messages about changes, for a private channel ----
@@ -863,6 +937,8 @@ def main(argv=None):
     x = sp.add_parser("outbox", help="format unreported changes as plain-text messages (sends nothing)")
     x.add_argument("--format", choices=("text", "json"), default="text")
     x.add_argument("--mark-sent", action="store_true", help="after delivery, record these as reported"); x.set_defaults(f=cmd_outbox)
+    x = sp.add_parser("scaffold", help="write the files for a public data repository (commits nothing)")
+    x.add_argument("dir"); x.add_argument("--pandu-ref", required=True, dest="pandu_ref"); x.set_defaults(f=cmd_scaffold)
     x = sp.add_parser("init", help="set this log's visibility (default is private)")
     x.add_argument("--visibility", choices=("public", "private"), required=True)
     x.add_argument("--deny", action="append", help="text that must never appear in a public log, e.g. the private repo's name")

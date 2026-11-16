@@ -1,4 +1,4 @@
-import contextlib, io, os, subprocess, sys, tempfile, unittest, shutil, json
+import contextlib, io, os, re, subprocess, sys, tempfile, unittest, shutil, json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import pandu
 
@@ -540,6 +540,139 @@ class Git(Base):
         c, o = run("sync"); self.assertNotEqual(c, 0); self.assertIn("missing parent", o)
         after = subprocess.run(["git", "--git-dir", self.bare, "rev-parse", "main"], capture_output=True, text=True).stdout
         self.assertEqual(tip, after)  # our commit was not pushed on top of the invalid graph
+
+    REF = "89f1884da65eba62838862f966ec7a0003e5bbe4"
+
+    def test_scaffold_files_and_workflow_invariants(self):
+        out = os.path.join(self.t, "scaf")
+        self.assertEqual(run("scaffold", out, "--pandu-ref", self.REF)[0], 0)
+        wf = open(os.path.join(out, ".github", "workflows", "sweep.yml")).read() if False else None
+        with open(os.path.join(out, ".github", "workflows", "sweep.yml")) as f:
+            wf = f.read()
+        self.assertIn(self.REF, wf); self.assertNotIn("__PANDU_REF__", wf)
+        self.assertIn("permissions:\n  contents: write", wf)
+        self.assertIn("concurrency:", wf); self.assertIn("cancel-in-progress: false", wf)
+        self.assertIn("fetch-depth: 0", wf); self.assertIn("timeout-minutes", wf)
+        self.assertNotIn("secrets.", wf)
+        self.assertIn("persist-credentials: false", wf)
+        self.assertEqual(wf.count("github.token"), 1)  # the automatic token reaches one step only
+        self.assertLess(wf.index("persist-credentials"), wf.index("github.token"))
+        self.assertEqual(len(re.findall(r"uses: \S+@[0-9a-f]{40}", wf)), wf.count("uses:"))
+        self.assertNotIn("pull_request", wf)
+        with open(os.path.join(out, "pandu.json")) as f:
+            self.assertEqual(json.load(f), {"visibility": "public"})
+        self.assertFalse(os.path.exists(os.path.join(out, "events")))
+        self.assertNotEqual(run("scaffold", out, "--pandu-ref", self.REF)[0], 0)  # never overwrites
+        self.assertNotEqual(run("scaffold", os.path.join(self.t, "x"), "--pandu-ref", "main")[0], 0)
+
+    def test_scaffold_needs_an_empty_directory(self):
+        d = os.path.join(self.t, "ne"); os.makedirs(d)
+        open(os.path.join(d, "notes.txt"), "w").close()
+        c, o = run("scaffold", d, "--pandu-ref", self.REF); self.assertNotEqual(c, 0)
+        self.assertEqual(os.listdir(d), ["notes.txt"])  # nothing written
+        e = os.path.join(self.t, "ne2"); os.makedirs(e)
+        os.symlink(d, os.path.join(e, "sub"))
+        self.assertNotEqual(run("scaffold", e, "--pandu-ref", self.REF)[0], 0)
+        link = os.path.join(self.t, "lnk"); os.symlink(d, link)
+        self.assertNotEqual(run("scaffold", link, "--pandu-ref", self.REF)[0], 0)
+        gd = os.path.join(self.t, "ne3"); os.makedirs(gd)
+        self.g(gd, "init", "-q")  # only .git is allowed
+        self.assertEqual(run("scaffold", gd, "--pandu-ref", self.REF)[0], 0)
+
+    @staticmethod
+    def rd(p):
+        with open(p) as f:
+            return f.read()
+
+    @staticmethod
+    def wr(p, t):
+        with open(p, "w") as f:
+            f.write(t)
+
+    def scaffolded(self):
+        out = self.A
+        self.assertEqual(run("scaffold", out, "--pandu-ref", self.REF)[0], 0)
+        for k, v in (("user.name", "t"), ("user.email", "t@example.invalid")):
+            self.g(out, "config", k, v)
+        self.g(out, "add", "."); self.g(out, "commit", "-q", "-m", "scaffold"); self.g(out, "push", "-q", "origin", "HEAD:main")
+        os.environ["PANDU_DIR"] = out
+        return out
+
+    def test_workflow_must_stay_the_reviewed_template(self):
+        out = self.scaffolded()
+        wf = os.path.join(out, ".github", "workflows", "sweep.yml")
+        good = self.rd(wf)
+        # a new reviewed hash is fine
+        new = good.replace(self.REF, "a" * 40)
+        self.wr(wf, new); self.g(out, "commit", "-qam", "bump")
+        self.assertEqual(run("sync")[0], 0)
+        # uncommitted tamper in the working file
+        self.wr(wf, new + "      - run: echo extra\n")
+        c, o = run("sync"); self.assertNotEqual(c, 0); self.assertIn("reviewed template", o)
+        # committed tamper, then restored: history still carries it, so nothing is pushed
+        self.g(out, "commit", "-qam", "tamper"); self.wr(wf, new); self.g(out, "commit", "-qam", "restore")
+        c, o = run("sync"); self.assertNotEqual(c, 0); self.assertIn("reviewed template", o)
+        self.assertNotIn("echo extra", subprocess.run(["git", "--git-dir", self.bare, "log", "-p", "main"], capture_output=True, text=True).stdout)
+
+    def test_workflow_removal_and_unpinned_ref_fail_closed(self):
+        out = self.scaffolded()
+        wf = os.path.join(out, ".github", "workflows", "sweep.yml")
+        good = self.rd(wf)
+        self.wr(wf, good.replace(self.REF, "main"))
+        c, o = run("sync"); self.assertNotEqual(c, 0); self.assertIn("pinned", o)
+        self.wr(wf, good)
+        os.remove(wf)
+        c, o = run("sync"); self.assertNotEqual(c, 0); self.assertIn("removed", o)
+        self.g(out, "rm", "-q", "--cached", ".github/workflows/sweep.yml"); self.g(out, "commit", "-qm", "rm")
+        c, o = run("sync"); self.assertNotEqual(c, 0); self.assertIn("removes the workflow", o)
+
+    def ci(self, where):
+        """The same commands the workflow runs."""
+        os.environ["PANDU_DIR"] = where
+        return [run("sweep"), run("sync", "--message", "Record expired grants"), run("check")]
+
+    def test_scheduled_routine_end_to_end(self):
+        out = self.A
+        self.assertEqual(run("scaffold", out, "--pandu-ref", self.REF)[0], 0)
+        for k, v in (("user.name", "t"), ("user.email", "t@example.invalid")):
+            self.g(out, "config", k, v)
+        self.g(out, "add", "."); self.g(out, "commit", "-q", "-m", "scaffold")
+        self.g(out, "push", "-q", "origin", "HEAD:main")
+        os.environ["PANDU_DIR"] = out
+        i = self.add("agreed", "Public grant", "--evidence", "https://example.com/d", "--expires", "2000-01-01")
+        self.assertEqual(run("sync")[0], 0)
+        # fresh full clone, like the Action's checkout, runs the routine
+        ci = os.path.join(self.t, "ci")
+        self.g(self.t, "clone", "-q", self.bare, ci)
+        for k, v in (("user.name", "github-actions[bot]"), ("user.email", "bot@example.invalid")):
+            self.g(ci, "config", k, v)
+        res = self.ci(ci)
+        self.assertEqual([c for c, _ in res], [0, 0, 0], res)
+        os.environ["PANDU_DIR"] = out
+        self.assertEqual(run("sync")[0], 0)
+        self.assertEqual(fold_status(i), "expired")
+        self.assertEqual(run("check")[0], 0)
+        # running the routine again the same day changes nothing
+        n = self.remote_log().count("\n")
+        self.assertEqual([c for c, _ in self.ci(ci)], [0, 0, 0])
+        self.assertEqual(self.remote_log().count("\n"), n)
+
+    def test_scheduled_routine_surfaces_a_conflict_as_a_failed_run(self):
+        out = self.A
+        run("scaffold", out, "--pandu-ref", self.REF)
+        for k, v in (("user.name", "t"), ("user.email", "t@example.invalid")):
+            self.g(out, "config", k, v)
+        self.g(out, "add", "."); self.g(out, "commit", "-q", "-m", "scaffold"); self.g(out, "push", "-q", "origin", "HEAD:main")
+        os.environ["PANDU_DIR"] = out
+        i = self.add("agreed", "G", "--evidence", "https://example.com/d", "--expires", "2099-01-01"); run("sync")
+        ci = os.path.join(self.t, "ci")
+        self.g(self.t, "clone", "-q", self.bare, ci)
+        os.environ["PANDU_DIR"] = out
+        run("correct", i, "--expires", "2099-02-01", "--public-ok"); run("sync")
+        os.environ["PANDU_DIR"] = ci
+        run("resolve", i, "revoked", "--public-ok"); run("sync")
+        res = self.ci(ci)
+        self.assertEqual(res[2][0], 1)  # check fails, so the run is red and GitHub notifies
 
     def test_private_log_cannot_sync(self):
         os.environ["PANDU_DIR"] = self.A
