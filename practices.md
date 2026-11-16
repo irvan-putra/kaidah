@@ -55,6 +55,8 @@ Short, honest progress notes beat silence. Say if work is continuing, blocked or
 
 Use the commit attribution the owner explicitly authorized, check it after pushing, and say how the work was made when that matters. When changes are published, include a link to the commits so the owner can review them.
 
+Commit identity records who committed a change; it does not by itself establish who authored every part or which rights can be licensed. Keep a concise, public-safe provenance note for material human contributions and reused sources. Do not claim exclusive rights merely because code was committed under your name.
+
 ## 12. Optional data-sharing features
 
 For optional features that send data somewhere, one owner preference is a simple on/off setting that defaults to off, instead of a confirmation popup on every action. This is a preference, not a rule for every product.
