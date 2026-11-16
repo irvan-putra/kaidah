@@ -1,0 +1,5 @@
+{"description": "Read access to one source for one task",
+ "fields": ["source", "task"],
+ "title": "Read {source} for {task}",
+ "scope": "Read {source}, only to do {task}. No copying out of it.",
+ "conditions": "Share only what the task needs. Say what was read when reporting back."}

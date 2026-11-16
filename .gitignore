@@ -1,0 +1,6 @@
+.pandu/
+__pycache__/
+status.md
+status.html
+status.*.md
+status.*.html

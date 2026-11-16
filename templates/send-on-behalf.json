@@ -1,0 +1,5 @@
+{"description": "Send one kind of message to named recipients",
+ "fields": ["recipients", "purpose"],
+ "title": "Send messages to {recipients} about {purpose}",
+ "scope": "Messages to {recipients}, only about {purpose}.",
+ "conditions": "Owner sees the words first unless they said otherwise. No new recipients without a new yes."}

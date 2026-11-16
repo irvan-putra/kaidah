@@ -1,6 +1,6 @@
 # Tools that could help
 
-Status: exploratory proposals. Nothing here is built or committed to. The question is what would help a human assistant keep up with fast, parallel work - and, more broadly, how an owner and an assistant coordinate shared work so both always know where it stands.
+Status: proposals 1 to 3 now have a first small implementation in [tools/](tools/README.md) (a local command line tool, no dependencies). The open questions below are still open. The question is what would help a human assistant keep up with fast, parallel work - and, more broadly, how an owner and an assistant coordinate shared work so both always know where it stands.
 
 ## Why tools at all
 
@@ -36,5 +36,7 @@ If the same kind of permission comes up often - for example, push access to a ne
 - Where should the log live so both sides actually keep it updated?
 - How much detail is useful before it becomes noise?
 - Who cleans up expired grants, and how does the log show that it happened?
+
+On detail versus noise, see the [research note](docs/research/log-detail-vs-noise.md): it found no established optimum for logs like this, and suggests keeping a full stored record with a shorter default view.
 
 Suggestions and experiments are welcome as issues or pull requests.

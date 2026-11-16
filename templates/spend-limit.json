@@ -1,0 +1,5 @@
+{"description": "Spend up to a fixed amount on one purpose",
+ "fields": ["amount", "purpose"],
+ "title": "Spend up to {amount} on {purpose}",
+ "scope": "Total spend up to {amount}, only for {purpose}.",
+ "conditions": "Report each charge. Stop and ask before going over the limit."}

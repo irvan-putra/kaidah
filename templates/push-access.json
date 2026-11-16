@@ -1,0 +1,5 @@
+{"description": "Write access to one repository for one project",
+ "fields": ["repo", "project"],
+ "title": "Push access to {repo} for {project}",
+ "scope": "Push commits to {repo}, only for {project}. No other repositories.",
+ "conditions": "Public, generic content only. Ask before deleting branches, rewriting history or changing settings."}

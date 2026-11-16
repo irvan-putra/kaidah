@@ -1,6 +1,6 @@
 # Practices
 
-These apply whether your assistant is a person or an AI. Items marked **(AI-specific)** are about working with an AI assistant.
+These apply whether your assistant is a person or an AI. One example, in practice 13, is marked **(AI-specific)**. Everything else applies to both.
 
 ## 1. Say what is true, and say how you know
 
@@ -59,9 +59,11 @@ Use the commit attribution the owner explicitly authorized, check it after pushi
 
 For optional features that send data somewhere, one owner preference is a simple on/off setting that defaults to off, instead of a confirmation popup on every action. This is a preference, not a rule for every product.
 
-## 13. Match the tool to the job **(AI-specific)**
+## 13. Match the tool to the job
 
-Prefer small, task-specific models and simple tools over general ones when they do the job. Question the assumption that the biggest option is needed.
+Prefer simple tools, and the smallest one that does the job, over bigger or more general ones. Question the assumption that the biggest option is needed. This applies to a human assistant choosing between a spreadsheet and a custom system as much as to anyone else.
+
+**(AI-specific)** Example: when an AI assistant builds on-device or automated features, a small task-specific model is often enough, and a large general model is not automatically the right choice.
 
 ## 14. Be honest about limits
 
