@@ -38,6 +38,7 @@ See [shared-log.md](shared-log.md) for a public log in a GitHub data repository,
     pandu due [--within DAYS] [--format json]   # expiry notices due, with stable keys; read-only
     pandu due --sent-file F [--mark-attempt|--mark-sent|--clear-attempt KEY...]   # delivery record with an uncertain state
     pandu checkpoint export|verify|restore FILE   # log + sent record in one plain file, see checkpoint.md
+    # runbook.md: the manual routine; tests/rehearsal.py runs it with made-up data
     pandu scaffold DIR --pandu-ref HASH   # files for a public data repo, with the daily expiry job
     pandu init --visibility public --deny PRIVATE-REPO-NAME   # a public log: writes then need --public-ok
     pandu outbox         # plain-text messages for changes not yet reported (sends nothing)
