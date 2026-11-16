@@ -221,6 +221,216 @@ class Due(Base):
         c, o = run("due"); self.assertEqual(o.strip(), "nothing due")
 
 
+class DueSent(Base):
+    def setUp(self):
+        super().setUp()
+        os.environ["PANDU_TEST_MODE"] = "1"; os.environ["PANDU_TODAY"] = "2026-06-10"
+        self.a = self.add("agreed", "Grant A", "--evidence", "x", "--expires", "2026-06-10")
+        self.b = self.add("agreed", "Grant B", "--evidence", "x", "--expires", "2026-06-01")
+        self.f = os.path.join(self.d.name, "..", "sentfile-" + os.path.basename(self.d.name) + ".txt")
+        self.f = os.path.abspath(self.f)
+        self.addCleanup(lambda: os.path.exists(self.f) and os.remove(self.f))
+
+    def due(self, *x):
+        c, o = run("due", "--format", "json", "--sent-file", self.f, *x); self.assertEqual(c, 0, o)
+        return json.loads(o)["notices"]
+
+    def test_marking_hides_only_that_key_and_is_idempotent(self):
+        n = self.due(); self.assertEqual(len(n), 2)
+        self.assertIn(n[0]["key"], n[0]["message"])  # the message carries its key
+        self.assertFalse(os.path.exists(self.f))  # listing writes nothing
+        k = n[0]["key"]
+        c, o = run("due", "--sent-file", self.f, "--mark-sent", k); self.assertEqual(c, 0); self.assertIn("recorded 1", o)
+        self.assertEqual([x["key"] for x in self.due()], [n[1]["key"]])
+        c, o = run("due", "--sent-file", self.f, "--mark-sent", k); self.assertIn("1 unchanged", o)
+        with open(self.f) as fh:
+            self.assertEqual(fh.read(), k + "\n")  # no duplicate line
+        self.assertEqual(os.stat(self.f).st_mode & 0o777, 0o600)
+        # listing alone never marks: the other notice is still pending after a re-run
+        self.assertEqual(len(self.due()), 1); self.assertEqual(len(self.due()), 1)
+
+    def test_attempt_states_pause_a_notice_until_resolved(self):
+        k = self.due()[0]["key"]
+        def st():
+            c, o = run("due", "--format", "json", "--sent-file", self.f); d = json.loads(o)
+            return [x["key"] for x in d["notices"]], [x["key"] for x in d["uncertain"]]
+        self.assertIn(k, st()[0])
+        run("due", "--sent-file", self.f, "--mark-attempt", k)
+        pend, unc = st(); self.assertNotIn(k, pend); self.assertEqual(unc, [k])  # never resent while unknown
+        self.assertIn("UNCERTAIN", run("due", "--sent-file", self.f)[1])
+        run("due", "--sent-file", self.f, "--mark-attempt", k)  # repeat adds no line
+        with open(self.f) as fh:
+            self.assertEqual(fh.read(), "?" + k + "\n")
+        run("due", "--sent-file", self.f, "--clear-attempt", k)  # confirmed not delivered: pending again
+        pend, unc = st(); self.assertIn(k, pend); self.assertEqual(unc, [])
+        run("due", "--sent-file", self.f, "--mark-attempt", k); run("due", "--sent-file", self.f, "--mark-sent", k)
+        pend, unc = st(); self.assertNotIn(k, pend); self.assertEqual(unc, [])  # delivered wins
+        c, o = run("due", "--sent-file", self.f, "--clear-attempt", k); self.assertNotEqual(c, 0)  # cannot undo delivered
+        c, o = run("due", "--sent-file", self.f, "--mark-attempt", k); self.assertEqual(c, 0); self.assertIn("unchanged", o)
+        c, o = run("due", "--sent-file", self.f, "--mark-sent", k, "--mark-attempt", k); self.assertNotEqual(c, 0)
+
+    def test_a_corrected_date_is_a_new_notice(self):
+        k = self.due()[0]["key"]; run("due", "--sent-file", self.f, "--mark-sent", k)
+        run("correct", self.a, "--expires", "2026-06-11"); run("correct", self.b, "--expires", "2026-06-20")
+        os.environ["PANDU_TODAY"] = "2026-06-11"
+        keys = [x["key"] for x in self.due()]
+        self.assertEqual(keys, [f"{self.a}:2026-06-11:due"])
+
+    def test_bad_files_and_keys_fail_closed(self):
+        for text in ("garbage\n", self.a + ":2026-06-10:due", "\xff\n"):
+            with open(self.f, "wb") as fh:
+                fh.write(text.encode("latin-1"))
+            c, o = run("due", "--sent-file", self.f); self.assertNotEqual(c, 0, text)
+            c, o = run("due", "--sent-file", self.f, "--mark-sent", f"{self.a}:2026-06-10:due"); self.assertNotEqual(c, 0, text)
+            with open(self.f, "rb") as fh:
+                self.assertEqual(fh.read(), text.encode("latin-1"))  # not changed
+        os.remove(self.f)
+        c, o = run("due", "--sent-file", self.f, "--mark-sent", "not-a-key"); self.assertNotEqual(c, 0)
+        self.assertFalse(os.path.exists(self.f))
+        self.assertNotEqual(run("due", "--mark-sent", f"{self.a}:2026-06-10:due")[0], 0)  # needs --sent-file
+
+    def test_symlink_is_refused(self):
+        target = self.f + ".target"
+        with open(target, "w") as fh:
+            fh.write("")
+        self.addCleanup(os.remove, target)
+        os.symlink(target, self.f)
+        self.assertNotEqual(run("due", "--sent-file", self.f)[0], 0)
+        self.assertNotEqual(run("due", "--sent-file", self.f, "--mark-sent", f"{self.a}:2026-06-10:due")[0], 0)
+
+    def test_parallel_marks_do_not_duplicate_or_lose_keys(self):
+        import threading
+        keys = [f"{self.a}:2026-06-{d:02d}:due" for d in range(1, 21)]
+        errs = []
+        def go(chunk):
+            try:
+                pandu.append_sent_keys(self.f, chunk)
+            except BaseException as e:
+                errs.append(e)
+        ts = [threading.Thread(target=go, args=(keys[i::4] + keys[:3],)) for i in range(4)]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        self.assertEqual(errs, [])
+        with open(self.f) as fh:
+            lines = fh.read().split("\n")[:-1]
+        self.assertEqual(sorted(lines), sorted(keys))
+
+
+class Checkpoint(Base):
+    def setUp(self):
+        super().setUp()
+        os.environ["PANDU_TEST_MODE"] = "1"; os.environ["PANDU_TODAY"] = "2026-06-10"
+        self.a = self.add("agreed", "Synthetic grant", "--evidence", "example reference", "--expires", "2026-06-10")
+        run("correct", self.a, "--expires", "2026-06-11")
+        self.base = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, self.base, True)
+        self.sent = os.path.join(self.base, "sent.txt"); self.cp = os.path.join(self.base, "cp.json")
+        self.key = f"{self.a}:2026-06-11:due"
+        run("due", "--sent-file", self.sent, "--mark-attempt", self.key)
+
+    def test_round_trip_keeps_events_and_uncertain_state(self):
+        c, o = run("checkpoint", "export", self.cp, "--sent-file", self.sent); self.assertEqual(c, 0, o)
+        self.assertEqual(os.stat(self.cp).st_mode & 0o777, 0o600)
+        self.assertNotEqual(run("checkpoint", "export", self.cp)[0], 0)  # never overwrites
+        c, o = run("checkpoint", "verify", self.cp); self.assertEqual(c, 0); self.assertIn("1 uncertain", o)
+        new = os.path.join(self.base, "restored"); sent2 = os.path.join(self.base, "sent2.txt")
+        c, o = run("checkpoint", "restore", self.cp, "--into", new, "--sent-file", sent2); self.assertEqual(c, 0, o)
+        os.environ["PANDU_DIR"] = new
+        self.assertEqual(fold_status(self.a), "open")
+        os.environ["PANDU_TODAY"] = "2026-06-11"
+        c, o = run("due", "--format", "json", "--sent-file", sent2)
+        self.assertEqual([x["key"] for x in json.loads(o)["uncertain"]], [self.key])  # still not resent after restore
+        with open(self.sent) as f1, open(sent2) as f2:
+            self.assertEqual(f1.read(), f2.read())
+        self.assertNotEqual(run("checkpoint", "restore", self.cp, "--into", new)[0], 0)  # not empty
+
+    def test_restore_never_drops_the_sent_record(self):
+        run("checkpoint", "export", self.cp, "--sent-file", self.sent)
+        new = os.path.join(self.base, "r2")
+        c, o = run("checkpoint", "restore", self.cp, "--into", new); self.assertNotEqual(c, 0); self.assertIn("--sent-file", o)
+        self.assertFalse(os.path.exists(new))
+        run("checkpoint", "export", os.path.join(self.base, "cp2.json"))  # no sent record at all: restoring without one is fine
+        self.assertEqual(run("checkpoint", "restore", os.path.join(self.base, "cp2.json"), "--into", new)[0], 0)
+
+    def test_restore_leaves_nothing_behind_when_publishing_fails(self):
+        from unittest import mock
+        run("checkpoint", "export", self.cp, "--sent-file", self.sent)
+        before = sorted(os.listdir(self.base))
+        new = os.path.join(self.base, "r3"); sent2 = os.path.join(self.base, "sent3.txt")
+        with mock.patch("os.rename", side_effect=OSError("disk error")):  # fails after the sent record was linked in
+            c, o = run("checkpoint", "restore", self.cp, "--into", new, "--sent-file", sent2)
+        self.assertNotEqual(c, 0); self.assertIn("nothing was left behind", o)
+        self.assertEqual(sorted(os.listdir(self.base)), before)  # no dir, no sent file, no staging or temp files
+        with mock.patch("os.link", side_effect=OSError("disk error")):  # fails while publishing the sent record
+            c, o = run("checkpoint", "restore", self.cp, "--into", new, "--sent-file", sent2)
+        self.assertNotEqual(c, 0); self.assertEqual(sorted(os.listdir(self.base)), before)
+        self.assertEqual(run("checkpoint", "restore", self.cp, "--into", new, "--sent-file", sent2)[0], 0)  # clean retry works
+
+    def test_export_sees_a_consistent_pair_while_appends_run(self):
+        import threading
+        keys = [f"{self.a}:2026-07-{d:02d}:due" for d in range(1, 29)]
+        stop = []
+        def writer():
+            for k in keys:
+                pandu.append_sent_keys(self.sent, [k], "attempt")
+                pandu.append_sent_keys(self.sent, [k], "sent")
+            stop.append(1)
+        t = threading.Thread(target=writer); t.start()
+        seen = 0
+        while not stop or seen < 3:
+            ev, sent = pandu.snapshot(self.sent)
+            st = pandu.parse_sent_text(sent, "x")  # always whole lines, never a torn write
+            self.assertTrue(set(st) <= set(keys) | {self.key})
+            seen += 1
+            if seen > 5000:
+                break
+        t.join()
+        ev, sent = pandu.snapshot(self.sent)
+        st = pandu.parse_sent_text(sent, "x")
+        self.assertTrue(all(st[k] == "sent" for k in keys))  # every fsynced mark is in the final export
+
+    def test_covers_gate_before_sending(self):
+        run("checkpoint", "export", self.cp, "--sent-file", self.sent)
+        c, o = run("checkpoint", "covers", self.cp, "--sent-file", self.sent, "--key", self.key); self.assertEqual(c, 0, o)
+        k2 = f"{self.a}:2026-06-11:expired"
+        self.assertNotEqual(run("checkpoint", "covers", self.cp, "--sent-file", self.sent, "--key", k2)[0], 0)  # no attempt recorded
+        run("due", "--sent-file", self.sent, "--mark-attempt", k2)  # state moved on after publishing
+        c, o = run("checkpoint", "covers", self.cp, "--sent-file", self.sent, "--key", self.key)
+        self.assertNotEqual(c, 0); self.assertIn("STALE", o)
+        run("checkpoint", "export", os.path.join(self.base, "cp3.json"), "--sent-file", self.sent)
+        self.assertEqual(run("checkpoint", "covers", os.path.join(self.base, "cp3.json"), "--sent-file", self.sent, "--key", k2)[0], 0)
+        self.add("work", "new event")  # a new event makes the old checkpoint stale too
+        self.assertNotEqual(run("checkpoint", "covers", os.path.join(self.base, "cp3.json"), "--sent-file", self.sent)[0], 0)
+
+    def test_damaged_or_foreign_checkpoints_fail_closed(self):
+        run("checkpoint", "export", self.cp, "--sent-file", self.sent)
+        with open(self.cp) as f:
+            good = json.load(f)
+        def bad(mut):
+            c = json.loads(json.dumps(good)); mut(c)
+            p = os.path.join(self.base, "bad.json")
+            with open(p, "w") as f:
+                json.dump(c, f)
+            tgt = os.path.join(self.base, "t"); shutil.rmtree(tgt, True)
+            self.assertNotEqual(run("checkpoint", "verify", p)[0], 0)
+            self.assertNotEqual(run("checkpoint", "restore", p, "--into", tgt)[0], 0)
+            self.assertFalse(os.path.exists(tgt))
+        bad(lambda c: c.update(format="pandu-checkpoint-2"))
+        bad(lambda c: c.update(sent="x\n"))                     # checksum mismatch
+        bad(lambda c: c["events"].popitem())                     # checksum mismatch
+        bad(lambda c: c.update(extra=1))
+        def resum(c):
+            c["sent"] = "garbage\n"; c["sha256"] = pandu.checkpoint_digest(c["events"], c["sent"])
+        bad(resum)                                                # valid checksum, invalid sent record
+        def orphan(c):
+            e = next(iter(c["events"].values())); k = "a" * 12
+            c["events"][k] = dict(e, eid=k, op="correct", parents=["b" * 12])
+            c["sha256"] = pandu.checkpoint_digest(c["events"], c["sent"])
+        bad(orphan)                                               # missing parent
+        with open(self.cp, "w") as f:
+            f.write("{not json")
+        self.assertNotEqual(run("checkpoint", "verify", self.cp)[0], 0)
+
+
 class Visibility(Base):
     def public(self, *deny):
         args = ["init", "--visibility", "public"]

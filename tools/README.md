@@ -36,6 +36,8 @@ See [shared-log.md](shared-log.md) for a public log in a GitHub data repository,
     pandu sweep          # record expired grants (deterministic, same result on any machine)
     pandu settle ID revoked --note "why"   # explicitly merge a conflict
     pandu due [--within DAYS] [--format json]   # expiry notices due, with stable keys; read-only
+    pandu due --sent-file F [--mark-attempt|--mark-sent|--clear-attempt KEY...]   # delivery record with an uncertain state
+    pandu checkpoint export|verify|restore FILE   # log + sent record in one plain file, see checkpoint.md
     pandu scaffold DIR --pandu-ref HASH   # files for a public data repo, with the daily expiry job
     pandu init --visibility public --deny PRIVATE-REPO-NAME   # a public log: writes then need --public-ok
     pandu outbox         # plain-text messages for changes not yet reported (sends nothing)

@@ -1,0 +1,20 @@
+{
+ "events": {
+  "2e48c49fc411": {
+   "at": "2026-11-16T08:18:44+00:00",
+   "eid": "2e48c49fc411",
+   "entry": "2e48c49fc411",
+   "fields": {
+    "evidence": "example reference",
+    "expires": "2026-06-10",
+    "kind": "agreed",
+    "title": "Example grant"
+   },
+   "op": "add",
+   "parents": []
+  }
+ },
+ "format": "pandu-checkpoint-1",
+ "sent": "?2e48c49fc411:2026-06-10:due\n",
+ "sha256": "276454c550ae5f3f85dd26d6fad2ecd64f9ceb4d962096923240dc8bafefb71b"
+}

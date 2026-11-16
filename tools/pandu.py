@@ -14,7 +14,7 @@ Nothing is silently merged, extended or revived.
 This is a local tool: it does not enforce permissions, remove access or send
 notifications. The log is an index; the linked evidence wins if they disagree.
 """
-import argparse, datetime as dt, hashlib, html, json, os, re, subprocess, sys, tempfile, uuid
+import argparse, datetime as dt, fcntl, hashlib, html, json, os, re, shutil, subprocess, sys, tempfile, uuid
 
 KINDS = ("agreed", "waiting", "approval", "work")
 RESOLUTIONS = ("approved", "denied", "done", "expired", "revoked", "archived")
@@ -658,6 +658,143 @@ def cmd_scaffold(a):
         print("wrote " + p)
 
 
+# ---- checkpoint: one plain JSON file with the private log and the sent record ----
+CHECKPOINT_FORMAT = "pandu-checkpoint-1"
+
+
+def checkpoint_digest(events, sent):
+    body = json.dumps({"events": events, "sent": sent}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def checkpoint_load(path):
+    """Read and fully validate a checkpoint. Any doubt stops it with nothing changed."""
+    if os.path.islink(path) or not os.path.isfile(path):
+        die(f"{path} is not a plain file")
+    try:
+        with open(path, encoding="utf-8") as f:
+            c = json.load(f)
+    except (ValueError, OSError) as e:
+        die(f"{path} is not a readable checkpoint ({e})")
+    if not isinstance(c, dict) or c.get("format") != CHECKPOINT_FORMAT:
+        die(f"{path} is not a '{CHECKPOINT_FORMAT}' file (a newer or different format is refused)")
+    events, sent = c.get("events"), c.get("sent")
+    if set(c) != {"format", "events", "sent", "sha256"} or not isinstance(events, dict) or not isinstance(sent, str):
+        die("the checkpoint has missing or unexpected fields")
+    if c["sha256"] != checkpoint_digest(events, sent):
+        die("the checkpoint checksum does not match its content (damaged or edited). Nothing was changed")
+    for eid, e in events.items():
+        if (not re.match(r"^[0-9a-f]{12,16}$", eid) or not isinstance(e, dict) or e.get("eid") != eid
+                or "op" not in e or "entry" not in e or not isinstance(e.get("parents", []), list)):
+            die(f"the checkpoint has an invalid event '{eid}'")
+    fold(events)  # missing parents, cycles, incomplete history all stop here
+    parse_sent_text(sent, "the checkpoint's sent record")
+    return events, sent
+
+
+def snapshot(sent_file):
+    """The events and the sent record as of one moment. The shared lock on the sent file is held while
+    both are read, and an append needs the exclusive lock, so no attempt or delivery can land between
+    the two reads. Events are only ever added, each by one atomic link, so they cannot be half written."""
+    if not sent_file or not os.path.exists(sent_file):
+        return load_events(), ""
+    if os.path.islink(sent_file):
+        die(f"{sent_file} is a symlink; refusing to use it")
+    with open(sent_file, "rb") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        raw = f.read()
+        events = load_events()
+    try:
+        sent = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        die(f"{sent_file} is not valid text; nothing was changed")
+    return events, sent
+
+
+def cmd_checkpoint(a):
+    if a.action == "covers":
+        events, sent = checkpoint_load(a.file)
+        cur_events, cur_sent = snapshot(a.sent_file)
+        fold(cur_events); parse_sent_text(cur_sent, a.sent_file or "the sent record")
+        if checkpoint_digest(cur_events, cur_sent) != checkpoint_digest(events, sent):
+            die("STALE: the checkpoint does not match the current log and sent record. Publish a new checkpoint "
+                "and check again before sending")
+        if a.key:
+            if not KEY_RE.match(a.key):
+                die(f"'{a.key}' is not a notice key")
+            if parse_sent_text(sent, "the checkpoint").get(a.key) != "uncertain":
+                die(f"the checkpoint does not record an attempt for {a.key}. Record --mark-attempt, publish, then check again")
+        print("covered: the checkpoint holds exactly the current state" + (f", including the attempt for {a.key}" if a.key else ""))
+    elif a.action == "export":
+        events, sent = snapshot(a.sent_file)
+        fold(events)
+        if a.sent_file:
+            parse_sent_text(sent, a.sent_file)
+        c = {"format": CHECKPOINT_FORMAT, "events": events, "sent": sent, "sha256": checkpoint_digest(events, sent)}
+        try:
+            fd = os.open(a.file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except OSError as e:
+            die(f"cannot create {a.file} ({e.strerror}); it never overwrites. Nothing was changed")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(c, sort_keys=True, indent=1) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        print(f"wrote {a.file}: {len(events)} event(s), sha256 {c['sha256']}. Plain text: encrypt it before it is stored.")
+    elif a.action == "verify":
+        events, sent = checkpoint_load(a.file)
+        st = parse_sent_text(sent, "sent")
+        print(f"ok: {len(events)} event(s), {len(fold(events))} entr(ies), sent record: "
+              f"{sum(v == 'sent' for v in st.values())} delivered, {sum(v == 'uncertain' for v in st.values())} uncertain")
+    else:  # restore
+        events, sent = checkpoint_load(a.file)
+        if not a.into:
+            die("restore needs --into DIR")
+        if sent and not a.sent_file:
+            die("this checkpoint carries a sent record, and restoring without --sent-file would drop it "
+                "and could repeat notices. Add --sent-file PATH. Nothing was changed")
+        d = os.path.abspath(a.into)
+        if os.path.islink(a.into) or (os.path.lexists(d) and (not os.path.isdir(d) or os.listdir(d))):
+            die(f"{a.into} must be an empty directory (or not exist). Nothing was changed")
+        if not os.path.isdir(os.path.dirname(d)):
+            die(f"the parent of {a.into} does not exist. Nothing was changed")
+        if a.sent_file and (os.path.lexists(a.sent_file) or not os.path.isdir(os.path.dirname(os.path.abspath(a.sent_file)))):
+            die(f"{a.sent_file} already exists or its folder is missing. Nothing was changed")
+        # Build everything aside first, then publish: the sent record (never replaces a file), then
+        # the log directory. A failure we can catch removes what we published, so you get both or neither.
+        stage = tempfile.mkdtemp(dir=os.path.dirname(d), prefix=".pandu-restore-")
+        sent_tmp = None
+        linked = False
+        try:
+            os.mkdir(os.path.join(stage, "events"), 0o700)
+            for eid, e in events.items():
+                fd = os.open(os.path.join(stage, "events", eid + ".json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(e, sort_keys=True, indent=1) + "\n")
+                    f.flush(); os.fsync(f.fileno())
+            if a.sent_file and sent:
+                fd, sent_tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(a.sent_file)), prefix=".pandu-sent-")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(sent); f.flush(); os.fsync(f.fileno())
+                os.chmod(sent_tmp, 0o600)
+                os.link(sent_tmp, a.sent_file)  # fails if the file appeared meanwhile; never overwrites
+                linked = True
+            os.chmod(stage, 0o700)
+            os.rename(stage, d)
+            stage = None
+        except BaseException as e:
+            if linked:
+                os.unlink(a.sent_file)
+            if isinstance(e, OSError):
+                die(f"restore failed ({e}); nothing was left behind")
+            raise
+        finally:
+            if sent_tmp and os.path.exists(sent_tmp):
+                os.unlink(sent_tmp)
+            if stage and os.path.exists(stage):
+                shutil.rmtree(stage, ignore_errors=True)
+        print(f"restored {len(events)} event(s) into {a.into}" + (f" and the sent record into {a.sent_file}" if a.sent_file and sent else ""))
+
+
 # ---- outbox: plain-text messages about changes, for a private channel ----
 SENT_NAME = "sent.txt"
 
@@ -738,10 +875,102 @@ def cmd_outbox(a):
             print("nothing to report")
 
 
+KEY_RE = re.compile(r"^[0-9a-f]{8,32}:\d{4}-\d{2}-\d{2}:(upcoming|due|expired)$")
+LINE_RE = re.compile(r"^([?!]?)(.+)$")
+MARK = {"sent": "", "attempt": "?", "clear": "!"}
+STATE = {"": "sent", "?": "uncertain", "!": "pending"}
+
+
+def parse_sent_text(text, label):
+    """Fold the sent file into {key: state}. Lines are in order and the last line for a key wins:
+    'KEY' delivered, '?KEY' send attempted and outcome not known, '!KEY' confirmed not delivered.
+    Anything unreadable fails closed, because guessing could repeat or drop a notice. A last line
+    without a newline is a write that was cut off, so it is refused too."""
+    if text and not text.endswith("\n"):
+        die(f"{label} ends in a partial line (an interrupted write?). Fix or remove that line by hand. Nothing was changed")
+    out = {}
+    for n, ln in enumerate(text.split("\n")[:-1], 1):
+        m = LINE_RE.match(ln)
+        if not m or not KEY_RE.match(m.group(2)):
+            die(f"{label} line {n} is not a notice record. Nothing was changed")
+        out[m.group(2)] = STATE[m.group(1)]
+    return out
+
+
+def read_sent_text(path, locked=True):
+    """Raw sent file text, read under a shared lock so it never overlaps an append.
+    locked=False is for a caller that already holds the exclusive lock."""
+    if os.path.islink(path):
+        die(f"{path} is a symlink; refusing to use it")
+    if not os.path.exists(path):
+        return ""
+    with open(path, "rb") as f:
+        if locked:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        raw = f.read()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        die(f"{path} is not valid text; nothing was changed")
+
+
+def read_sent_state(path, locked=True):
+    return parse_sent_text(read_sent_text(path, locked), path)
+
+
+def append_sent_keys(path, keys, how="sent"):
+    """Record keys in the sent file: append-only, exclusive lock, one write and an fsync.
+    how = sent (delivery confirmed), attempt (about to send; outcome unknown until confirmed),
+    clear (confirmed that the attempt did not deliver). Re-read under the lock, so a repeat or two
+    parallel runs add nothing twice. Returns (added, skipped)."""
+    for k in keys:
+        if not KEY_RE.match(k):
+            die(f"'{k}' is not a notice key (entry:YYYY-MM-DD:due|expired|upcoming). Nothing was marked")
+    if os.path.islink(path):
+        die(f"{path} is a symlink; refusing to use it")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "r+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        have = read_sent_state(path, locked=False)  # re-read under the exclusive lock; malformed content stops here
+        new = []
+        for k in sorted(set(keys)):
+            cur = have.get(k, "pending")
+            if how == "sent" and cur != "sent":
+                new.append(k)
+            elif how == "attempt":
+                if cur == "sent":
+                    continue
+                if cur == "uncertain":
+                    continue
+                new.append(k)
+            elif how == "clear":
+                if cur == "sent":
+                    die(f"{k} is recorded as delivered, so its attempt cannot be cleared. Nothing was changed")
+                if cur == "uncertain":
+                    new.append(k)
+        if new:
+            f.write("".join(MARK[how] + k + "\n" for k in new))
+            f.flush()
+            os.fsync(f.fileno())
+    return len(new), len(set(keys)) - len(new)
+
+
 def cmd_due(a):
     """List the expiry notices that are due, with stable idempotency keys. Read-only: it sends
     nothing and writes nothing. A scheduler or a person delivers each key once and keeps its own
     record of what was delivered. The log is an index; the original grant stays the authority."""
+    acts = [(a.mark_sent, "sent"), (a.mark_attempt, "attempt"), (a.clear_attempt, "clear")]
+    acts = [(k, h) for k, h in acts if k]
+    if len(acts) > 1:
+        die("use only one of --mark-attempt, --mark-sent, --clear-attempt at a time")
+    if acts:
+        if not a.sent_file:
+            die("recording a state needs --sent-file")
+        added, skipped = append_sent_keys(a.sent_file, acts[0][0], acts[0][1])
+        print(f"recorded {added} ({acts[0][1]}), {skipped} unchanged")
+        return
+    sent = read_sent_state(a.sent_file) if a.sent_file else {}
+    uncertain = []
     today = today_date()
     out = []
     for i, en in fold().items():
@@ -763,14 +992,24 @@ def cmd_due(a):
                 "upcoming": f"Grant expires in {days} day(s), on {d}: {title} (ref {i})."}[phase]
         # the key names the entry, the expiry date and the phase, so a correction that moves the
         # date gives a new key and a repeat run gives the same key
-        out.append({"key": f"{i}:{d}:{phase}", "entry": i, "phase": phase, "expires": str(d), "text": text})
+        key = f"{i}:{d}:{phase}"
+        st = sent.get(key, "pending")
+        if st == "sent":
+            continue
+        if st == "uncertain":
+            uncertain.append({"key": key, "text": text})  # an attempt with no confirmed outcome: do not resend
+            continue
+        out.append({"key": key, "entry": i, "phase": phase, "expires": str(d), "text": text,
+                    "message": f"{text}\n(ref {key})"})
     out.sort(key=lambda x: (x["expires"], x["key"]))
     if a.format == "json":
-        print(json.dumps({"today": str(today), "notices": out}, indent=1))
+        print(json.dumps({"today": str(today), "notices": out, "uncertain": uncertain}, indent=1))
     else:
+        for x in uncertain:
+            print(f"UNCERTAIN {x['key']}\tsend attempted, outcome unknown: check the chat, then --mark-sent or --clear-attempt")
         for x in out:
             print(f"{x['key']}\t{x['text']}")
-        if not out:
+        if not out and not uncertain:
             print("nothing due")
 
 
@@ -975,7 +1214,15 @@ def main(argv=None):
     x.add_argument("--mark-sent", action="store_true", help="after delivery, record these as reported"); x.set_defaults(f=cmd_outbox)
     x = sp.add_parser("due", help="list expiry notices that are due, with idempotency keys (read-only)")
     x.add_argument("--format", choices=("text", "json"), default="text")
-    x.add_argument("--within", type=int, default=0, help="also list grants expiring within this many days"); x.set_defaults(f=cmd_due)
+    x.add_argument("--within", type=int, default=0, help="also list grants expiring within this many days")
+    x.add_argument("--sent-file", help="file of already delivered keys, one per line; those are skipped")
+    x.add_argument("--mark-attempt", nargs="+", metavar="KEY", help="record, BEFORE sending, that a send is starting")
+    x.add_argument("--mark-sent", nargs="+", metavar="KEY", help="record that delivery was confirmed")
+    x.add_argument("--clear-attempt", nargs="+", metavar="KEY", help="record that an attempt is confirmed not delivered")
+    x.set_defaults(f=cmd_due)
+    x = sp.add_parser("checkpoint", help="export, verify or restore the log and sent record as one file (plain text; encrypt it)")
+    x.add_argument("action", choices=("export", "verify", "restore", "covers")); x.add_argument("file")
+    x.add_argument("--sent-file"); x.add_argument("--into"); x.add_argument("--key"); x.set_defaults(f=cmd_checkpoint)
     x = sp.add_parser("scaffold", help="write the files for a public data repository (commits nothing)")
     x.add_argument("dir"); x.add_argument("--pandu-ref", required=True, dest="pandu_ref"); x.set_defaults(f=cmd_scaffold)
     x = sp.add_parser("init", help="set this log's visibility (default is private)")
