@@ -1,5 +1,7 @@
 # Practices
 
+These apply whether your assistant is a person or an AI. Items marked **(AI-specific)** are about working with an AI assistant.
+
 ## 1. Say what is true, and say how you know
 
 Ask the assistant to separate what it checked from what it assumes. A good status says what is done, what is still running, what is blocked, and who acts next. "Done" should mean verified, not attempted.
@@ -43,7 +45,7 @@ Prefer tests that can be rerun by anyone: documented steps and synthetic fixture
 
 ## 9. Work in parallel
 
-If two routes can run at once, run them at once. One stalled investigation should not block another.
+If two routes can run at once, run them at once. One stalled investigation should not block another. For a human assistant this is subject to real limits: their capacity, and whether sharing or delegating the work is allowed at all. Handing a route to a colleague needs the owner's approval for both the handoff and any information it carries; parking a route visibly is the fallback, never letting it vanish.
 
 ## 10. Give updates during long work
 
@@ -57,7 +59,7 @@ Use the commit attribution the owner explicitly authorized, check it after pushi
 
 For optional features that send data somewhere, one owner preference is a simple on/off setting that defaults to off, instead of a confirmation popup on every action. This is a preference, not a rule for every product.
 
-## 13. Match the tool to the job
+## 13. Match the tool to the job **(AI-specific)**
 
 Prefer small, task-specific models and simple tools over general ones when they do the job. Question the assumption that the biggest option is needed.
 
