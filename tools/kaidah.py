@@ -1,7 +1,7 @@
-"""pandu: a shared decision/permission log, status page and grant templates.
+"""kaidah: a shared decision/permission log, status page and grant templates.
 
 Standard library only. Data is private by default and lives in a local
-directory (PANDU_DIR, default ./.pandu). Every event is its own small,
+directory (KAIDAH_DIR, default ./.kaidah). Every event is its own small,
 immutable JSON file in events/, named by a unique event id. Nothing is ever
 edited or deleted: corrections and resolutions are new events.
 
@@ -22,7 +22,7 @@ WORK_STATES = ("running", "done", "blocked")
 FIELD_KEYS = ("title", "scope", "conditions", "expires", "evidence", "waiting_on",
               "next_actor", "state", "notes")
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_DIR = os.environ.get("PANDU_TEMPLATES", os.path.join(HERE, "..", "templates"))
+TEMPLATE_DIR = os.environ.get("KAIDAH_TEMPLATES", os.path.join(HERE, "..", "templates"))
 
 
 def now():
@@ -34,7 +34,7 @@ def die(msg):
 
 
 def data_dir():
-    d = os.environ.get("PANDU_DIR", ".pandu")
+    d = os.environ.get("KAIDAH_DIR", ".kaidah")
     if not os.path.isdir(d):
         os.makedirs(d, mode=0o700, exist_ok=True)
         os.chmod(d, 0o700)
@@ -88,7 +88,7 @@ def load_events():
                 e = json.load(f)
             if (not isinstance(e, dict) or e.get("eid") != fn[:-5] or "op" not in e
                     or "entry" not in e or not isinstance(e.get("parents", []), list)):
-                raise ValueError("not a valid pandu event")
+                raise ValueError("not a valid kaidah event")
         except (ValueError, OSError) as err:
             die(f"{p} is damaged ({err}). Nothing was changed. Repair or restore that file.")
         out[e["eid"]] = e
@@ -96,12 +96,12 @@ def load_events():
 
 
 def today_date():
-    """Real date. PANDU_TODAY is a TEST-ONLY override and is refused unless
-    PANDU_TEST_MODE=1 is also set, so it can never quietly change what is valid."""
-    t = os.environ.get("PANDU_TODAY")
+    """Real date. KAIDAH_TODAY is a TEST-ONLY override and is refused unless
+    KAIDAH_TEST_MODE=1 is also set, so it can never quietly change what is valid."""
+    t = os.environ.get("KAIDAH_TODAY")
     if t:
-        if os.environ.get("PANDU_TEST_MODE") != "1":
-            die("PANDU_TODAY is a test-only override and needs PANDU_TEST_MODE=1. "
+        if os.environ.get("KAIDAH_TEST_MODE") != "1":
+            die("KAIDAH_TODAY is a test-only override and needs KAIDAH_TEST_MODE=1. "
                 "Unset it to use the real date.")
         return parse_date(t)
     return dt.date.today()
@@ -173,11 +173,11 @@ def find(entries, prefix):
 
 
 # ---- visibility: keep a public log free of private material ----
-CONFIG_NAME = "pandu.json"
+CONFIG_NAME = "kaidah.json"
 SKIP_KEYS = {"eid", "entry", "parents", "at", "op", "resolution", "status", "template", "kind", "state"}
 
 
-LOCAL_NAME = "pandu.local.json"   # local only, never staged: holds the deny strings
+LOCAL_NAME = "kaidah.local.json"   # local only, never staged: holds the deny strings
 LOCAL_ONLY = (LOCAL_NAME, "sent.txt")
 
 
@@ -190,7 +190,7 @@ def _read_json(p):
 
 
 def config():
-    """visibility comes from the tracked pandu.json; deny strings from the local-only file,
+    """visibility comes from the tracked kaidah.json; deny strings from the local-only file,
     so a private name never reaches a public repository or its history."""
     d = data_dir()
     c = {"visibility": "private", "deny": []}
@@ -465,7 +465,7 @@ def git(*args, check=True):
     return r
 
 
-ALLOWED_PATHS = (re.compile(r"^events/[0-9a-f]{12,16}\.json$"), re.compile(r"^pandu\.json$"),
+ALLOWED_PATHS = (re.compile(r"^events/[0-9a-f]{12,16}\.json$"), re.compile(r"^kaidah\.json$"),
                  re.compile(r"^\.gitignore$"), re.compile(r"^README\.md$"),
                  re.compile(r"^\.github/workflows/sweep\.yml$"))
 
@@ -475,17 +475,17 @@ def path_ok(p):
 
 
 WORKFLOW = ".github/workflows/sweep.yml"
-REF_LINE = re.compile(r"(PANDU_REF: )[0-9a-f]{40}$", re.M)
+REF_LINE = re.compile(r"(KAIDAH_REF: )[0-9a-f]{40}$", re.M)
 
 
 def workflow_problem(text):
     """The workflow holds a write token, so it must be the reviewed template exactly. Only the
-    pinned pandu commit hash may differ. Returns a problem string or None."""
+    pinned kaidah commit hash may differ. Returns a problem string or None."""
     if len(REF_LINE.findall(text)) != 1:
-        return "it has no single pinned 40-character pandu commit hash"
+        return "it has no single pinned 40-character kaidah commit hash"
     with open(os.path.join(TEMPLATE_DIR, "data-repo", "sweep.yml"), encoding="utf-8") as f:
         want = f.read()
-    if REF_LINE.sub(r"\1__PANDU_REF__", text) != want:
+    if REF_LINE.sub(r"\1__KAIDAH_REF__", text) != want:
         return "it differs from the reviewed template"
     return None
 
@@ -506,7 +506,7 @@ def check_history(rev, public):
         status = meta.split()[-1]
         new = meta.split()[3]
         if not path_ok(path):
-            die(f"history of {rev} contains unrelated path '{path}'. This repository is not a pandu data-only "
+            die(f"history of {rev} contains unrelated path '{path}'. This repository is not a kaidah data-only "
                 "repository, so nothing was pushed. Use a fresh repository.")
         if path.startswith("events/") and status != "A":
             die(f"history of {rev} edits or removes event file '{path}'. Nothing was pushed.")
@@ -552,7 +552,7 @@ def verify_tree_and_history(public, rev="HEAD"):
     tracked = git("ls-files").stdout.splitlines()
     for p in tracked:
         if not path_ok(p):
-            die(f"'{p}' is tracked but is not pandu data. Nothing was pushed.")
+            die(f"'{p}' is tracked but is not kaidah data. Nothing was pushed.")
     wf = os.path.join(data_dir(), WORKFLOW)
     if os.path.lexists(wf):
         if os.path.islink(wf) or not os.path.isfile(wf):
@@ -570,7 +570,7 @@ def verify_tree_and_history(public, rev="HEAD"):
 
 
 def cmd_sync(a):
-    """Commit new events, merge the remote's, push. Only events/ and pandu.json are ever
+    """Commit new events, merge the remote's, push. Only events/ and kaidah.json are ever
     committed. Integrity (full event graph, data-only history, public rules) is checked before
     the local commit and again after the merge, before every push. A same-named file with different
     content is the only possible git conflict: the merge is aborted and nothing is overwritten."""
@@ -578,9 +578,9 @@ def cmd_sync(a):
         die("the data directory is not a git repository")
     public = config()["visibility"] == "public"
     if not public:
-        die("sync only works for a PUBLIC log (pandu init --visibility public). A private log is never pushed anywhere.")
+        die("sync only works for a PUBLIC log (kaidah init --visibility public). A private log is never pushed anywhere.")
     events_dir()
-    # nothing but pandu data may be staged, and nothing is committed until the graph is valid
+    # nothing but kaidah data may be staged, and nothing is committed until the graph is valid
     staged = git("diff", "--cached", "--name-only").stdout.splitlines()
     odd = [p for p in staged if not path_ok(p)]
     if odd:
@@ -599,7 +599,7 @@ def cmd_sync(a):
         if has_remote:
             check_history(ref, public)
             if public:
-                check_commit_metadata(ref)  # refuse to even merge foreign history that is not pandu data
+                check_commit_metadata(ref)  # refuse to even merge foreign history that is not kaidah data
         if has_remote and git("rev-parse", "--verify", "-q", "HEAD", check=False).returncode != 0:
             git("checkout", "-q", "-B", branch, ref)  # nothing local yet: just take the remote
         elif has_remote:
@@ -618,13 +618,13 @@ def cmd_sync(a):
 
 
 # ---- scaffold a public data repository (files only, nothing is committed or pushed) ----
-SCAFFOLD = (("README.md", "README.md"), ("pandu.json", "pandu.json"), ("gitignore", ".gitignore"),
+SCAFFOLD = (("README.md", "README.md"), ("kaidah.json", "kaidah.json"), ("gitignore", ".gitignore"),
             ("sweep.yml", ".github/workflows/sweep.yml"))
 
 
 def cmd_scaffold(a):
-    if not re.match(r"^[0-9a-f]{40}$", a.pandu_ref):
-        die("--pandu-ref must be the full 40-character commit hash of reviewed pandu code")
+    if not re.match(r"^[0-9a-f]{40}$", a.kaidah_ref):
+        die("--kaidah-ref must be the full 40-character commit hash of reviewed kaidah code")
     d = a.dir
     if os.path.islink(d):
         die(f"{d} is a symlink; nothing was written")
@@ -641,7 +641,7 @@ def cmd_scaffold(a):
     staged = []  # read and build every file first, so a failure writes nothing
     for name, dest in SCAFFOLD:
         with open(os.path.join(src, name), encoding="utf-8") as f:
-            staged.append((os.path.join(d, dest), f.read().replace("__PANDU_REF__", a.pandu_ref)))
+            staged.append((os.path.join(d, dest), f.read().replace("__KAIDAH_REF__", a.kaidah_ref)))
     done = []
     try:
         for p, text in staged:
@@ -659,7 +659,7 @@ def cmd_scaffold(a):
 
 
 # ---- checkpoint: one plain JSON file with the private log and the sent record ----
-CHECKPOINT_FORMAT = "pandu-checkpoint-1"
+CHECKPOINT_FORMAT = "kaidah-checkpoint-1"
 
 
 def checkpoint_digest(events, sent):
@@ -764,7 +764,7 @@ def cmd_checkpoint(a):
             die(f"{a.sent_file} already exists or its folder is missing. Nothing was changed")
         # Build everything aside first, then publish: the sent record (never replaces a file), then
         # the log directory. A failure we can catch removes what we published, so you get both or neither.
-        stage = tempfile.mkdtemp(dir=os.path.dirname(d), prefix=".pandu-restore-")
+        stage = tempfile.mkdtemp(dir=os.path.dirname(d), prefix=".kaidah-restore-")
         sent_tmp = None
         linked = False
         try:
@@ -775,7 +775,7 @@ def cmd_checkpoint(a):
                     f.write(json.dumps(e, sort_keys=True, indent=1) + "\n")
                     f.flush(); os.fsync(f.fileno())
             if a.sent_file and sent:
-                fd, sent_tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(a.sent_file)), prefix=".pandu-sent-")
+                fd, sent_tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(a.sent_file)), prefix=".kaidah-sent-")
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(sent); f.flush(); os.fsync(f.fileno())
                 os.chmod(sent_tmp, 0o600)
@@ -1215,7 +1215,7 @@ def cmd_grant(a):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="pandu", description=__doc__.split("\n")[0])
+    p = argparse.ArgumentParser(prog="kaidah", description=__doc__.split("\n")[0])
     sp = p.add_subparsers(dest="cmd", required=True)
 
     def common(x, req_title=True):
@@ -1250,7 +1250,7 @@ def main(argv=None):
     x.add_argument("--sent-file"); x.add_argument("--into"); x.add_argument("--key")
     x.add_argument("--min-records", type=int, help="refuse a copy whose sent record has fewer lines than this (counts only; see checkpoint.md)"); x.set_defaults(f=cmd_checkpoint)
     x = sp.add_parser("scaffold", help="write the files for a public data repository (commits nothing)")
-    x.add_argument("dir"); x.add_argument("--pandu-ref", required=True, dest="pandu_ref"); x.set_defaults(f=cmd_scaffold)
+    x.add_argument("dir"); x.add_argument("--kaidah-ref", required=True, dest="kaidah_ref"); x.set_defaults(f=cmd_scaffold)
     x = sp.add_parser("init", help="set this log's visibility (default is private)")
     x.add_argument("--visibility", choices=("public", "private"), required=True)
     x.add_argument("--deny", action="append", help="text that must never appear in a public log, e.g. the private repo's name")
@@ -1259,7 +1259,7 @@ def main(argv=None):
     x.add_argument("status", choices=("open",) + RESOLUTIONS); x.add_argument("--title"); common(x, False)
     x.add_argument("--note"); x.set_defaults(f=cmd_settle)
     x = sp.add_parser("sync", help="commit, merge and push events in a git data repo"); x.add_argument("--remote", default="origin")
-    x.add_argument("--message", default="pandu: record events"); x.set_defaults(f=cmd_sync)
+    x.add_argument("--message", default="kaidah: record events"); x.set_defaults(f=cmd_sync)
     x = sp.add_parser("sweep", help="record expired grants as expired"); x.add_argument("--dry-run", action="store_true"); x.set_defaults(f=cmd_sweep)
     x = sp.add_parser("list"); x.add_argument("--kind", choices=KINDS); x.add_argument("--all", action="store_true"); x.set_defaults(f=cmd_list)
     x = sp.add_parser("show"); x.add_argument("id"); x.set_defaults(f=cmd_show)

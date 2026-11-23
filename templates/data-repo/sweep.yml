@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pandu-sweep
+  group: kaidah-sweep
   cancel-in-progress: false
 
 jobs:
@@ -25,24 +25,24 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Fetch the pinned, reviewed pandu code
+      - name: Fetch the pinned, reviewed kaidah code
         env:
-          PANDU_REF: __PANDU_REF__
+          KAIDAH_REF: __KAIDAH_REF__
         run: |
-          git init -q /tmp/pandu
-          git -C /tmp/pandu fetch -q --depth 1 https://github.com/irvan-putra/pandu "$PANDU_REF"
-          git -C /tmp/pandu checkout -q FETCH_HEAD
-          test "$(git -C /tmp/pandu rev-parse HEAD)" = "$PANDU_REF"
+          git init -q /tmp/kaidah
+          git -C /tmp/kaidah fetch -q --depth 1 https://github.com/irvan-putra/kaidah "$KAIDAH_REF"
+          git -C /tmp/kaidah checkout -q FETCH_HEAD
+          test "$(git -C /tmp/kaidah rev-parse HEAD)" = "$KAIDAH_REF"
       - name: Test the pinned code
-        run: python3 -m unittest discover -s /tmp/pandu/tests
+        run: python3 -m unittest discover -s /tmp/kaidah/tests
       - name: Record expiries (no token)
         env:
-          PANDU_DIR: .
+          KAIDAH_DIR: .
           TZ: Asia/Jakarta
-        run: python3 /tmp/pandu/tools/pandu.py sweep
+        run: python3 /tmp/kaidah/tools/kaidah.py sweep
       - name: Verify and push (the only step with the token)
         env:
-          PANDU_DIR: .
+          KAIDAH_DIR: .
           TZ: Asia/Jakarta
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -53,9 +53,9 @@ jobs:
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          python3 /tmp/pandu/tools/pandu.py sync --message "Record expired grants"
+          python3 /tmp/kaidah/tools/kaidah.py sync --message "Record expired grants"
       - name: Check for conflicts and open expired grants (no token)
         env:
-          PANDU_DIR: .
+          KAIDAH_DIR: .
           TZ: Asia/Jakarta
-        run: python3 /tmp/pandu/tools/pandu.py check
+        run: python3 /tmp/kaidah/tools/kaidah.py check

@@ -2,14 +2,14 @@
 """Scripted local rehearsal of the delivery and checkpoint commands, with made-up data.
 
 What this is: a small simulated caller (`deliver`) that runs the runbook steps in order against the
-real pandu commands, in temporary folders, with a fake chat file and a fake store (numbered copies).
+real kaidah commands, in temporary folders, with a fake chat file and a fake store (numbered copies).
 What this is not: proof of any real send, real storage, real encryption, two machines at once, or a
 real chat. It sends nothing and touches no account.
 Run: python3 tests/rehearsal.py"""
 import json, os, shutil, subprocess, sys, tempfile
 
-PANDU = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "pandu.py")
-ENV = dict(os.environ, PANDU_TEST_MODE="1", PANDU_TODAY="2026-06-10")
+KAIDAH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "kaidah.py")
+ENV = dict(os.environ, KAIDAH_TEST_MODE="1", KAIDAH_TODAY="2026-06-10")
 results = []
 
 
@@ -27,19 +27,19 @@ class Case:
         self.log, self.sent, self.chat = (os.path.join(self.dir, n) for n in ("log", "sent.txt", "chat.txt"))
         self.store = os.path.join(self.dir, "store")
         self.gen = 0
-        self.pandu("add", "agreed", f"Example grant {name}", "--evidence", "example reference", "--expires", "2026-06-10")
+        self.kaidah("add", "agreed", f"Example grant {name}", "--evidence", "example reference", "--expires", "2026-06-10")
         n = self.due()["notices"]
         self.key, self.msg = n[0]["key"], n[0]["message"]
 
-    def pandu(self, *args, log=None, ok=True):
-        r = subprocess.run([sys.executable, PANDU, *args], capture_output=True, text=True,
-                           env=dict(ENV, PANDU_DIR=log or self.log))
+    def kaidah(self, *args, log=None, ok=True):
+        r = subprocess.run([sys.executable, KAIDAH, *args], capture_output=True, text=True,
+                           env=dict(ENV, KAIDAH_DIR=log or self.log))
         if ok and r.returncode != 0:
-            raise SystemExit(f"FAILED: pandu {' '.join(args)}\n{r.stdout}{r.stderr}")
+            raise SystemExit(f"FAILED: kaidah {' '.join(args)}\n{r.stdout}{r.stderr}")
         return r
 
     def due(self, sent=None, log=None):
-        return json.loads(self.pandu("due", "--format", "json", "--sent-file", sent or self.sent, log=log).stdout)
+        return json.loads(self.kaidah("due", "--format", "json", "--sent-file", sent or self.sent, log=log).stdout)
 
     def chat_count(self):  # how many messages carry this key
         return sum(self.key in l for l in open(self.chat).read().splitlines()) if os.path.exists(self.chat) else 0
@@ -51,7 +51,7 @@ class Case:
     def store_checkpoint(self, publish=True):
         self.n = getattr(self, "n", 0) + 1
         tmp = os.path.join(self.dir, f"cp{self.n}.json")  # a new file each time, so an older copy stays as it was
-        self.pandu("checkpoint", "export", tmp, "--sent-file", self.sent)
+        self.kaidah("checkpoint", "export", tmp, "--sent-file", self.sent)
         if publish:
             self.gen += 1
             shutil.copy(tmp, os.path.join(self.store, f"gen{self.gen}.json"))
@@ -64,7 +64,7 @@ class Case:
         """The real covers command, run on the stored copy. Returns its exit code."""
         if self.gen == 0:
             return 1
-        return self.pandu("checkpoint", "covers", self.latest(), "--sent-file", self.sent, "--key", self.key, ok=False).returncode
+        return self.kaidah("checkpoint", "covers", self.latest(), "--sent-file", self.sent, "--key", self.key, ok=False).returncode
 
     def deliver(self, covers=None, publish=True, crash_after_send=False, verify_delivered=True, skip_seen=False):
         """The runbook steps for one notice. Returns what happened.
@@ -76,10 +76,10 @@ class Case:
         if self.key not in [x["key"] for x in d["notices"]]:
             return "nothing to send"
         if os.path.exists(self.chat) and not skip_seen:  # step 2, automatic: the ref is already in the chat export. Hold it, never mark sent.
-            seen = json.loads(self.pandu("due", "--format", "json", "--sent-file", self.sent, "--seen-in", self.chat).stdout)
+            seen = json.loads(self.kaidah("due", "--format", "json", "--sent-file", self.sent, "--seen-in", self.chat).stdout)
             if self.key in [x["key"] for x in seen["uncertain"]]:
                 return "stopped: ref found in chat, manual check"
-        self.pandu("due", "--sent-file", self.sent, "--mark-attempt", self.key)
+        self.kaidah("due", "--sent-file", self.sent, "--mark-attempt", self.key)
         self.store_checkpoint(publish=publish)
         if (covers or self.covers)() != 0:
             return "stopped: covers failed"
@@ -88,13 +88,13 @@ class Case:
             raise RuntimeError("simulated crash after the send")
         if not verify_delivered:
             return "sent, outcome unknown, left uncertain"
-        self.pandu("due", "--sent-file", self.sent, "--mark-sent", self.key)
+        self.kaidah("due", "--sent-file", self.sent, "--mark-sent", self.key)
         self.store_checkpoint()  # post-send export
         return "delivered"
 
     def restore(self, checkpoint, name):
         new_log, new_sent = os.path.join(self.dir, name + "-log"), os.path.join(self.dir, name + "-sent.txt")
-        self.pandu("checkpoint", "restore", checkpoint, "--into", new_log, "--sent-file", new_sent)
+        self.kaidah("checkpoint", "restore", checkpoint, "--into", new_log, "--sent-file", new_sent)
         return new_log, new_sent
 
 
@@ -135,7 +135,7 @@ def main(root):
     check("C a caller run on the restored state stops as uncertain and sends nothing",
           r == "stopped: uncertain keys" and c.chat_count() == 1)
     # the person verifies real delivery, which this rehearsal represents by an explicit decision
-    c.pandu("due", "--sent-file", sent, "--mark-sent", c.key)
+    c.kaidah("due", "--sent-file", sent, "--mark-sent", c.key)
     d = c.due()
     check("C settled by a verified delivery: nothing pending", d["notices"] == [] and d["uncertain"] == [])
 
@@ -147,7 +147,7 @@ def main(root):
     d1.log, d1.sent = log, sent
     check("D1 older copy and ref in chat: the caller stops, no second message",
           d1.deliver() == "stopped: ref found in chat, manual check" and d1.chat_count() == 1)
-    held = json.loads(d1.pandu("due", "--format", "json", "--sent-file", d1.sent, "--seen-in", d1.chat).stdout)
+    held = json.loads(d1.kaidah("due", "--format", "json", "--sent-file", d1.sent, "--seen-in", d1.chat).stdout)
     recorded = open(d1.sent).read().splitlines() if os.path.exists(d1.sent) else []
     check("D1 the key is held as uncertain by --seen-in, and no delivery was recorded",
           [x["key"] for x in held["uncertain"]] == [d1.key] and not held["notices"] and d1.key not in recorded)
@@ -174,7 +174,7 @@ def main(root):
     d3.deliver()
     witness = open(d3.sent).read().count("\n")  # the caller records this number after each publish
     os.remove(d3.chat)
-    r = d3.pandu("checkpoint", "restore", old, "--into", os.path.join(d3.dir, "old3"), "--sent-file", os.path.join(d3.dir, "old3-sent.txt"),
+    r = d3.kaidah("checkpoint", "restore", old, "--into", os.path.join(d3.dir, "old3"), "--sent-file", os.path.join(d3.dir, "old3-sent.txt"),
                  "--min-records", str(witness), ok=False)
     check("D3 older copy, chat lost, witness kept: the restore is refused", r.returncode != 0 and not os.path.exists(os.path.join(d3.dir, "old3")))
     log, sent = d3.restore(d3.latest(), "new")
@@ -197,15 +197,15 @@ def main(root):
     # G: refusals
     g = Case(root, "G"); g.deliver()
     cp = g.latest()
-    check("G restore refuses to drop the sent record", g.pandu("checkpoint", "restore", cp, "--into", os.path.join(g.dir, "x1"), ok=False).returncode != 0)
-    check("G restore refuses a non-empty folder", g.pandu("checkpoint", "restore", cp, "--into", g.log, "--sent-file", os.path.join(g.dir, "s9.txt"), ok=False).returncode != 0)
+    check("G restore refuses to drop the sent record", g.kaidah("checkpoint", "restore", cp, "--into", os.path.join(g.dir, "x1"), ok=False).returncode != 0)
+    check("G restore refuses a non-empty folder", g.kaidah("checkpoint", "restore", cp, "--into", g.log, "--sent-file", os.path.join(g.dir, "s9.txt"), ok=False).returncode != 0)
     t = json.load(open(cp)); t["sent"] = ""
     bad = os.path.join(g.dir, "tampered.json"); json.dump(t, open(bad, "w"))
-    check("G an edited checkpoint is refused", g.pandu("checkpoint", "verify", bad, ok=False).returncode != 0)
+    check("G an edited checkpoint is refused", g.kaidah("checkpoint", "verify", bad, ok=False).returncode != 0)
 
 
 if __name__ == "__main__":
-    root = tempfile.mkdtemp(prefix="pandu-rehearsal-")
+    root = tempfile.mkdtemp(prefix="kaidah-rehearsal-")
     try:
         main(root)
     finally:

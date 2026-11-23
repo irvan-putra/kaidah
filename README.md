@@ -1,4 +1,6 @@
-# pandu
+# kaidah
+
+Parked project. Renamed from pandu on 2026-11-24; no active automation.
 
 Working practices for people who build and research with an assistant, human or AI.
 

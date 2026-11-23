@@ -1,6 +1,6 @@
 # How much detail is useful before a shared log becomes noise?
 
-Research note for pandu, November 2026. Scope: what published research suggests about how much detail to keep in a shared owner/assistant decision, permission and status log, and where the line between useful detail and noise sits. This is a limited selection of sources from several neighboring fields, not a systematic survey. None of the sources reviewed here studies owner/assistant decision logs directly, so every recommendation is a transfer from another context and is marked as such. Study findings and design recommendations are kept separate throughout. Some sources were read in full; others were read as abstract plus metadata only, which limits how deeply their methods could be checked. The sources list at the end marks the access level for each.
+Research note for kaidah, November 2026. Scope: what published research suggests about how much detail to keep in a shared owner/assistant decision, permission and status log, and where the line between useful detail and noise sits. This is a limited selection of sources from several neighboring fields, not a systematic survey. None of the sources reviewed here studies owner/assistant decision logs directly, so every recommendation is a transfer from another context and is marked as such. Study findings and design recommendations are kept separate throughout. Some sources were read in full; others were read as abstract plus metadata only, which limits how deeply their methods could be checked. The sources list at the end marks the access level for each.
 
 ## Short answer
 
@@ -77,7 +77,7 @@ Not supported by anything reviewed here:
 - Direct evidence about owner/assistant shared decision and permission logs, for human or AI assistants. No such study appeared in the sources reviewed; the recommendations below are transfers.
 - Strong conclusions about optimal transparency in human-AI assistant work; the selection here is one small thesis.
 
-## Design recommendations for pandu
+## Design recommendations for kaidah
 
 Recommendations derived from the findings above, not findings themselves. They describe design direction only; the concrete storage format is the builder's evolving choice and this note does not bind it.
 

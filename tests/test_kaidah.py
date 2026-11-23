@@ -1,8 +1,8 @@
 import contextlib, io, os, re, subprocess, sys, tempfile, unittest, shutil, json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
-import pandu
+import kaidah
 
-SCRIPT = os.path.join(os.path.dirname(__file__), "..", "tools", "pandu.py")
+SCRIPT = os.path.join(os.path.dirname(__file__), "..", "tools", "kaidah.py")
 
 
 def run(*args):
@@ -10,7 +10,7 @@ def run(*args):
     code = 0
     with contextlib.redirect_stdout(out):
         try:
-            pandu.main(list(args))
+            kaidah.main(list(args))
         except SystemExit as e:
             code = e.code if isinstance(e.code, int) else 2
             if isinstance(e.code, str):
@@ -28,8 +28,8 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.TemporaryDirectory()
         self.old = dict(os.environ)
-        os.environ["PANDU_DIR"] = self.d.name
-        os.environ.pop("PANDU_TODAY", None); os.environ.pop("PANDU_TEST_MODE", None)
+        os.environ["KAIDAH_DIR"] = self.d.name
+        os.environ.pop("KAIDAH_TODAY", None); os.environ.pop("KAIDAH_TEST_MODE", None)
 
     def tearDown(self):
         os.environ.clear(); os.environ.update(self.old)
@@ -130,7 +130,7 @@ class Basics(Base):
 
 class Expiry(Base):
     def test_test_date_override_refused_without_test_mode(self):
-        os.environ["PANDU_TODAY"] = "2030-01-01"
+        os.environ["KAIDAH_TODAY"] = "2030-01-01"
         c, o = run("list")  # reading is fine
         self.add("agreed", "G", "--evidence", "m", "--expires", "2029-12-31")
         c, o = run("sweep")
@@ -154,7 +154,7 @@ class Expiry(Base):
         self.assertIn("revoked: removed in settings", section(s, "Closed"))
 
     def test_sweep_is_idempotent_and_deterministic(self):
-        os.environ["PANDU_TEST_MODE"] = "1"; os.environ["PANDU_TODAY"] = "2030-01-01"
+        os.environ["KAIDAH_TEST_MODE"] = "1"; os.environ["KAIDAH_TODAY"] = "2030-01-01"
         self.add("agreed", "G", "--evidence", "m", "--expires", "2029-12-31")
         run("sweep"); n = len(os.listdir(os.path.join(self.d.name, "events")))
         run("sweep")
@@ -196,7 +196,7 @@ class Outbox(Base):
 
 class Due(Base):
     def test_due_notices_are_stable_read_only_and_follow_corrections(self):
-        os.environ["PANDU_TEST_MODE"] = "1"; os.environ["PANDU_TODAY"] = "2026-06-10"
+        os.environ["KAIDAH_TEST_MODE"] = "1"; os.environ["KAIDAH_TODAY"] = "2026-06-10"
         a = self.add("agreed", "Grant A", "--evidence", "x", "--expires", "2026-06-10")
         b = self.add("agreed", "Grant B", "--evidence", "x", "--expires", "2026-06-12")
         self.add("agreed", "No expiry", "--evidence", "x")
@@ -212,7 +212,7 @@ class Due(Base):
         self.assertEqual(len(os.listdir(os.path.join(self.d.name, "events"))), n)  # writes nothing
         run("correct", b, "--expires", "2026-06-20")
         self.assertEqual(len(due("--within", "3")), 1)
-        os.environ["PANDU_TODAY"] = "2026-06-11"
+        os.environ["KAIDAH_TODAY"] = "2026-06-11"
         e1 = due(); self.assertEqual([(x["entry"], x["phase"]) for x in e1], [(a, "expired")])
         run("sweep")  # sweeping must not drop or change the notice
         self.assertEqual(due(), e1)
@@ -224,7 +224,7 @@ class Due(Base):
 class DueSent(Base):
     def setUp(self):
         super().setUp()
-        os.environ["PANDU_TEST_MODE"] = "1"; os.environ["PANDU_TODAY"] = "2026-06-10"
+        os.environ["KAIDAH_TEST_MODE"] = "1"; os.environ["KAIDAH_TODAY"] = "2026-06-10"
         self.a = self.add("agreed", "Grant A", "--evidence", "x", "--expires", "2026-06-10")
         self.b = self.add("agreed", "Grant B", "--evidence", "x", "--expires", "2026-06-01")
         self.f = os.path.join(self.d.name, "..", "sentfile-" + os.path.basename(self.d.name) + ".txt")
@@ -296,7 +296,7 @@ class DueSent(Base):
     def test_a_corrected_date_is_a_new_notice(self):
         k = self.due()[0]["key"]; run("due", "--sent-file", self.f, "--mark-sent", k)
         run("correct", self.a, "--expires", "2026-06-11"); run("correct", self.b, "--expires", "2026-06-20")
-        os.environ["PANDU_TODAY"] = "2026-06-11"
+        os.environ["KAIDAH_TODAY"] = "2026-06-11"
         keys = [x["key"] for x in self.due()]
         self.assertEqual(keys, [f"{self.a}:2026-06-11:due"])
 
@@ -328,7 +328,7 @@ class DueSent(Base):
         errs = []
         def go(chunk):
             try:
-                pandu.append_sent_keys(self.f, chunk)
+                kaidah.append_sent_keys(self.f, chunk)
             except BaseException as e:
                 errs.append(e)
         ts = [threading.Thread(target=go, args=(keys[i::4] + keys[:3],)) for i in range(4)]
@@ -343,7 +343,7 @@ class DueSent(Base):
 class Checkpoint(Base):
     def setUp(self):
         super().setUp()
-        os.environ["PANDU_TEST_MODE"] = "1"; os.environ["PANDU_TODAY"] = "2026-06-10"
+        os.environ["KAIDAH_TEST_MODE"] = "1"; os.environ["KAIDAH_TODAY"] = "2026-06-10"
         self.a = self.add("agreed", "Synthetic grant", "--evidence", "example reference", "--expires", "2026-06-10")
         run("correct", self.a, "--expires", "2026-06-11")
         self.base = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, self.base, True)
@@ -358,9 +358,9 @@ class Checkpoint(Base):
         c, o = run("checkpoint", "verify", self.cp); self.assertEqual(c, 0); self.assertIn("1 uncertain", o)
         new = os.path.join(self.base, "restored"); sent2 = os.path.join(self.base, "sent2.txt")
         c, o = run("checkpoint", "restore", self.cp, "--into", new, "--sent-file", sent2); self.assertEqual(c, 0, o)
-        os.environ["PANDU_DIR"] = new
+        os.environ["KAIDAH_DIR"] = new
         self.assertEqual(fold_status(self.a), "open")
-        os.environ["PANDU_TODAY"] = "2026-06-11"
+        os.environ["KAIDAH_TODAY"] = "2026-06-11"
         c, o = run("due", "--format", "json", "--sent-file", sent2)
         self.assertEqual([x["key"] for x in json.loads(o)["uncertain"]], [self.key])  # still not resent after restore
         with open(self.sent) as f1, open(sent2) as f2:
@@ -395,21 +395,21 @@ class Checkpoint(Base):
         stop = []
         def writer():
             for k in keys:
-                pandu.append_sent_keys(self.sent, [k], "attempt")
-                pandu.append_sent_keys(self.sent, [k], "sent")
+                kaidah.append_sent_keys(self.sent, [k], "attempt")
+                kaidah.append_sent_keys(self.sent, [k], "sent")
             stop.append(1)
         t = threading.Thread(target=writer); t.start()
         seen = 0
         while not stop or seen < 3:
-            ev, sent = pandu.snapshot(self.sent)
-            st = pandu.parse_sent_text(sent, "x")  # always whole lines, never a torn write
+            ev, sent = kaidah.snapshot(self.sent)
+            st = kaidah.parse_sent_text(sent, "x")  # always whole lines, never a torn write
             self.assertTrue(set(st) <= set(keys) | {self.key})
             seen += 1
             if seen > 5000:
                 break
         t.join()
-        ev, sent = pandu.snapshot(self.sent)
-        st = pandu.parse_sent_text(sent, "x")
+        ev, sent = kaidah.snapshot(self.sent)
+        st = kaidah.parse_sent_text(sent, "x")
         self.assertTrue(all(st[k] == "sent" for k in keys))  # every fsynced mark is in the final export
 
     def test_covers_gate_before_sending(self):
@@ -450,17 +450,17 @@ class Checkpoint(Base):
             self.assertNotEqual(run("checkpoint", "verify", p)[0], 0)
             self.assertNotEqual(run("checkpoint", "restore", p, "--into", tgt)[0], 0)
             self.assertFalse(os.path.exists(tgt))
-        bad(lambda c: c.update(format="pandu-checkpoint-2"))
+        bad(lambda c: c.update(format="kaidah-checkpoint-2"))
         bad(lambda c: c.update(sent="x\n"))                     # checksum mismatch
         bad(lambda c: c["events"].popitem())                     # checksum mismatch
         bad(lambda c: c.update(extra=1))
         def resum(c):
-            c["sent"] = "garbage\n"; c["sha256"] = pandu.checkpoint_digest(c["events"], c["sent"])
+            c["sent"] = "garbage\n"; c["sha256"] = kaidah.checkpoint_digest(c["events"], c["sent"])
         bad(resum)                                                # valid checksum, invalid sent record
         def orphan(c):
             e = next(iter(c["events"].values())); k = "a" * 12
             c["events"][k] = dict(e, eid=k, op="correct", parents=["b" * 12])
-            c["sha256"] = pandu.checkpoint_digest(c["events"], c["sent"])
+            c["sha256"] = kaidah.checkpoint_digest(c["events"], c["sent"])
         bad(orphan)                                               # missing parent
         with open(self.cp, "w") as f:
             f.write("{not json")
@@ -502,11 +502,11 @@ class Visibility(Base):
         self.public("one")
         c, o = run("init", "--visibility", "private"); self.assertNotEqual(c, 0)
         self.public("two")
-        self.assertEqual(sorted(pandu.config()["deny"]), ["one", "two"])
+        self.assertEqual(sorted(kaidah.config()["deny"]), ["one", "two"])
         self.assertEqual(run("init", "--visibility", "private", "--force")[0], 0)
 
     def test_damaged_config_fails_closed(self):
-        with open(os.path.join(self.d.name, "pandu.json"), "w") as f:
+        with open(os.path.join(self.d.name, "kaidah.json"), "w") as f:
             f.write("{nope")
         self.assertNotEqual(run("add", "work", "x")[0], 0)
 
@@ -542,12 +542,12 @@ class Integrity(Base):
         c, o = run("list"); self.assertNotEqual(c, 0); self.assertIn("missing", o)
 
     def test_parallel_adds(self):
-        env = dict(os.environ, PANDU_DIR=self.d.name)
+        env = dict(os.environ, KAIDAH_DIR=self.d.name)
         ps = [subprocess.Popen([sys.executable, SCRIPT, "add", "work", f"w{k}-{n}"], env=env, stdout=subprocess.DEVNULL)
               for k in range(8) for n in range(5)]
         for p in ps:
             self.assertEqual(p.wait(), 0)
-        self.assertEqual(len(pandu.fold()), 40)
+        self.assertEqual(len(kaidah.fold()), 40)
 
     def edit_in_two_places(self):
         i = self.add("agreed", "G", "--evidence", "m", "--expires", "2000-01-01")
@@ -556,9 +556,9 @@ class Integrity(Base):
         other = tempfile.mkdtemp()
         shutil.copytree(evd, os.path.join(other, "events"))
         run("correct", i, "--expires", "2099-01-01", "--reason", "A extends")
-        os.environ["PANDU_DIR"] = other
+        os.environ["KAIDAH_DIR"] = other
         run("resolve", i, "revoked", "--note", "B revokes")
-        os.environ["PANDU_DIR"] = self.d.name
+        os.environ["KAIDAH_DIR"] = self.d.name
         for fn in os.listdir(os.path.join(other, "events")):
             dst = os.path.join(evd, fn)
             if not os.path.exists(dst):
@@ -584,7 +584,7 @@ class Integrity(Base):
         self.assertEqual(fold_status(i), "revoked")
         self.assertEqual(run("check")[0], 0)
         # order of display/state never came from clocks
-        self.assertEqual(len(pandu.fold()[i]["heads"]), 1)
+        self.assertEqual(len(kaidah.fold()[i]["heads"]), 1)
 
     def test_clock_skew_cannot_revive_a_grant(self):
         i = self.add("agreed", "G", "--evidence", "m", "--expires", "2099-01-01")
@@ -594,12 +594,12 @@ class Integrity(Base):
         head_add = i
         ev = {"op": "correct", "entry": i, "parents": [head_add], "fields": {"expires": "2100-01-01"},
               "at": "2999-01-01T00:00:00+00:00"}
-        pandu.write_event(ev)
+        kaidah.write_event(ev)
         self.assertEqual(fold_status(i), "conflict")
 
 
 def fold_status(i):
-    return pandu.fold()[i]["status"]
+    return kaidah.fold()[i]["status"]
 
 
 class Git(Base):
@@ -635,8 +635,8 @@ class Git(Base):
             f.write(json.dumps(d, sort_keys=True, indent=1) + "\n")
 
     def use(self, p):
-        os.environ["PANDU_DIR"] = p
-        if not os.path.exists(os.path.join(p, "pandu.json")):
+        os.environ["KAIDAH_DIR"] = p
+        if not os.path.exists(os.path.join(p, "kaidah.json")):
             run("init", "--visibility", "public")
 
     def add(self, *a):
@@ -649,7 +649,7 @@ class Git(Base):
         self.use(self.B); self.add("work", "from B")
         c, o = run("sync"); self.assertEqual(c, 0, o)   # B must merge A's push first
         self.use(self.A); self.assertEqual(run("sync")[0], 0)
-        self.assertEqual(sorted(e["title"] for e in pandu.fold().values()), ["from A", "from B"])
+        self.assertEqual(sorted(e["title"] for e in kaidah.fold().values()), ["from A", "from B"])
 
     def test_concurrent_edit_through_git_becomes_conflict(self):
         self.use(self.A)
@@ -661,7 +661,7 @@ class Git(Base):
         self.assertEqual(run("check")[0], 1)
 
     def test_two_machines_sweep_same_day_do_not_conflict(self):
-        os.environ["PANDU_TEST_MODE"] = "1"; os.environ["PANDU_TODAY"] = "2030-01-01"
+        os.environ["KAIDAH_TEST_MODE"] = "1"; os.environ["KAIDAH_TODAY"] = "2030-01-01"
         self.use(self.A)
         i = self.add("agreed", "G", "--evidence", "https://example.com/m", "--expires", "2029-01-01"); run("sync")
         self.use(self.B); run("sync")
@@ -675,7 +675,7 @@ class Git(Base):
         # remote moves between B's commit and push: A pushes in the middle
         self.use(self.A); self.add("work", "a2"); run("sync")
         self.use(self.B); self.assertEqual(run("sync")[0], 0)
-        self.assertEqual(len(pandu.fold()), 3)
+        self.assertEqual(len(kaidah.fold()), 3)
 
     def test_same_name_different_content_aborts_merge(self):
         self.use(self.A); self.add("work", "x"); run("sync")
@@ -697,7 +697,7 @@ class Git(Base):
         run("init", "--visibility", "public", "--deny", "secret-repo")
         self.assertEqual(run("add", "work", "ok", "--public-ok")[0], 0)
         self.assertEqual(run("sync")[0], 0)
-        pandu.write_event({"op": "add", "entry": "leak00000001", "parents": [], "at": "x",
+        kaidah.write_event({"op": "add", "entry": "leak00000001", "parents": [], "at": "x",
                            "fields": {"kind": "work", "title": "from secret-repo"}}, "leak00000001")
         before = self.g(self.A, "rev-parse", "HEAD")
         c, o = run("sync")
@@ -715,19 +715,19 @@ class Git(Base):
         run("init", "--visibility", "public", "--deny", "secret-repo")
         run("add", "work", "ok", "--public-ok"); self.assertEqual(run("sync")[0], 0)
         tracked = self.g(self.A, "ls-files")
-        self.assertNotIn("pandu.local.json", tracked)
+        self.assertNotIn("kaidah.local.json", tracked)
         with open(os.path.join(self.A, ".gitignore")) as f:
-            self.assertIn("pandu.local.json", f.read())
+            self.assertIn("kaidah.local.json", f.read())
         allhist = self.g(self.A, "log", "--all", "-p")
         self.assertNotIn("secret-repo", allhist)
-        self.assertEqual(os.stat(os.path.join(self.A, "pandu.local.json")).st_mode & 0o777, 0o600)
-        with open(os.path.join(self.A, "pandu.json")) as f:
+        self.assertEqual(os.stat(os.path.join(self.A, "kaidah.local.json")).st_mode & 0o777, 0o600)
+        with open(os.path.join(self.A, "kaidah.json")) as f:
             self.assertNotIn("deny", f.read())
 
     def test_history_with_a_deny_in_config_blob_is_refused(self):
         self.use(self.A)
         run("add", "work", "ok", "--public-ok")
-        with open(os.path.join(self.A, "pandu.json"), "w") as f:
+        with open(os.path.join(self.A, "kaidah.json"), "w") as f:
             json.dump({"visibility": "public", "deny": ["secret-repo"]}, f)
         c, o = run("sync"); self.assertNotEqual(c, 0)
         self.assertEqual(self.remote_log(), "")
@@ -788,7 +788,7 @@ class Git(Base):
     def test_invalid_graph_is_never_committed_or_pushed(self):
         self.use(self.A)
         i = self.add("agreed", "G", "--evidence", "https://example.com/m")
-        pandu.write_event({"op": "correct", "entry": i, "parents": ["deadbeefdead"], "fields": {"notes": "x"},
+        kaidah.write_event({"op": "correct", "entry": i, "parents": ["deadbeefdead"], "fields": {"notes": "x"},
                            "previous": {}, "reason": "", "at": "x"})
         before = subprocess.run(["git", "-C", self.A, "rev-parse", "--verify", "-q", "HEAD"], capture_output=True).returncode
         c, o = run("sync"); self.assertNotEqual(c, 0); self.assertIn("missing parent", o)
@@ -802,8 +802,8 @@ class Git(Base):
         # a second clone pushes a dangling-parent event straight to the remote
         other = os.path.join(self.t, "B2")
         self.g(self.t, "clone", "-q", self.bare, other)
-        os.environ["PANDU_DIR"] = other
-        pandu.write_event({"op": "correct", "entry": i, "parents": ["deadbeefdead"], "fields": {"notes": "x"},
+        os.environ["KAIDAH_DIR"] = other
+        kaidah.write_event({"op": "correct", "entry": i, "parents": ["deadbeefdead"], "fields": {"notes": "x"},
                            "previous": {}, "reason": "", "at": "x"})
         self.g(other, "add", "events"); self.g(other, "commit", "-q", "-m", "bad"); self.g(other, "push", "-q", "origin", "HEAD:main")
         tip = self.g(self.t, "--git-dir", self.bare, "rev-parse", "main") if False else subprocess.run(
@@ -818,11 +818,11 @@ class Git(Base):
 
     def test_scaffold_files_and_workflow_invariants(self):
         out = os.path.join(self.t, "scaf")
-        self.assertEqual(run("scaffold", out, "--pandu-ref", self.REF)[0], 0)
+        self.assertEqual(run("scaffold", out, "--kaidah-ref", self.REF)[0], 0)
         wf = open(os.path.join(out, ".github", "workflows", "sweep.yml")).read() if False else None
         with open(os.path.join(out, ".github", "workflows", "sweep.yml")) as f:
             wf = f.read()
-        self.assertIn(self.REF, wf); self.assertNotIn("__PANDU_REF__", wf)
+        self.assertIn(self.REF, wf); self.assertNotIn("__KAIDAH_REF__", wf)
         self.assertIn("permissions:\n  contents: write", wf)
         self.assertIn("concurrency:", wf); self.assertIn("cancel-in-progress: false", wf)
         self.assertIn("fetch-depth: 0", wf); self.assertIn("timeout-minutes", wf)
@@ -832,25 +832,25 @@ class Git(Base):
         self.assertLess(wf.index("persist-credentials"), wf.index("github.token"))
         self.assertEqual(len(re.findall(r"uses: \S+@[0-9a-f]{40}", wf)), wf.count("uses:"))
         self.assertNotIn("pull_request", wf)
-        with open(os.path.join(out, "pandu.json")) as f:
+        with open(os.path.join(out, "kaidah.json")) as f:
             self.assertEqual(json.load(f), {"visibility": "public"})
         self.assertFalse(os.path.exists(os.path.join(out, "events")))
-        self.assertNotEqual(run("scaffold", out, "--pandu-ref", self.REF)[0], 0)  # never overwrites
-        self.assertNotEqual(run("scaffold", os.path.join(self.t, "x"), "--pandu-ref", "main")[0], 0)
+        self.assertNotEqual(run("scaffold", out, "--kaidah-ref", self.REF)[0], 0)  # never overwrites
+        self.assertNotEqual(run("scaffold", os.path.join(self.t, "x"), "--kaidah-ref", "main")[0], 0)
 
     def test_scaffold_needs_an_empty_directory(self):
         d = os.path.join(self.t, "ne"); os.makedirs(d)
         open(os.path.join(d, "notes.txt"), "w").close()
-        c, o = run("scaffold", d, "--pandu-ref", self.REF); self.assertNotEqual(c, 0)
+        c, o = run("scaffold", d, "--kaidah-ref", self.REF); self.assertNotEqual(c, 0)
         self.assertEqual(os.listdir(d), ["notes.txt"])  # nothing written
         e = os.path.join(self.t, "ne2"); os.makedirs(e)
         os.symlink(d, os.path.join(e, "sub"))
-        self.assertNotEqual(run("scaffold", e, "--pandu-ref", self.REF)[0], 0)
+        self.assertNotEqual(run("scaffold", e, "--kaidah-ref", self.REF)[0], 0)
         link = os.path.join(self.t, "lnk"); os.symlink(d, link)
-        self.assertNotEqual(run("scaffold", link, "--pandu-ref", self.REF)[0], 0)
+        self.assertNotEqual(run("scaffold", link, "--kaidah-ref", self.REF)[0], 0)
         gd = os.path.join(self.t, "ne3"); os.makedirs(gd)
         self.g(gd, "init", "-q")  # only .git is allowed
-        self.assertEqual(run("scaffold", gd, "--pandu-ref", self.REF)[0], 0)
+        self.assertEqual(run("scaffold", gd, "--kaidah-ref", self.REF)[0], 0)
 
     @staticmethod
     def rd(p):
@@ -864,11 +864,11 @@ class Git(Base):
 
     def scaffolded(self):
         out = self.A
-        self.assertEqual(run("scaffold", out, "--pandu-ref", self.REF)[0], 0)
+        self.assertEqual(run("scaffold", out, "--kaidah-ref", self.REF)[0], 0)
         for k, v in (("user.name", "t"), ("user.email", "t@example.invalid")):
             self.g(out, "config", k, v)
         self.g(out, "add", "."); self.g(out, "commit", "-q", "-m", "scaffold"); self.g(out, "push", "-q", "origin", "HEAD:main")
-        os.environ["PANDU_DIR"] = out
+        os.environ["KAIDAH_DIR"] = out
         return out
 
     def test_workflow_must_stay_the_reviewed_template(self):
@@ -901,17 +901,17 @@ class Git(Base):
 
     def ci(self, where):
         """The same commands the workflow runs."""
-        os.environ["PANDU_DIR"] = where
+        os.environ["KAIDAH_DIR"] = where
         return [run("sweep"), run("sync", "--message", "Record expired grants"), run("check")]
 
     def test_scheduled_routine_end_to_end(self):
         out = self.A
-        self.assertEqual(run("scaffold", out, "--pandu-ref", self.REF)[0], 0)
+        self.assertEqual(run("scaffold", out, "--kaidah-ref", self.REF)[0], 0)
         for k, v in (("user.name", "t"), ("user.email", "t@example.invalid")):
             self.g(out, "config", k, v)
         self.g(out, "add", "."); self.g(out, "commit", "-q", "-m", "scaffold")
         self.g(out, "push", "-q", "origin", "HEAD:main")
-        os.environ["PANDU_DIR"] = out
+        os.environ["KAIDAH_DIR"] = out
         i = self.add("agreed", "Public grant", "--evidence", "https://example.com/d", "--expires", "2000-01-01")
         self.assertEqual(run("sync")[0], 0)
         # fresh full clone, like the Action's checkout, runs the routine
@@ -921,7 +921,7 @@ class Git(Base):
             self.g(ci, "config", k, v)
         res = self.ci(ci)
         self.assertEqual([c for c, _ in res], [0, 0, 0], res)
-        os.environ["PANDU_DIR"] = out
+        os.environ["KAIDAH_DIR"] = out
         self.assertEqual(run("sync")[0], 0)
         self.assertEqual(fold_status(i), "expired")
         self.assertEqual(run("check")[0], 0)
@@ -932,33 +932,33 @@ class Git(Base):
 
     def test_scheduled_routine_surfaces_a_conflict_as_a_failed_run(self):
         out = self.A
-        run("scaffold", out, "--pandu-ref", self.REF)
+        run("scaffold", out, "--kaidah-ref", self.REF)
         for k, v in (("user.name", "t"), ("user.email", "t@example.invalid")):
             self.g(out, "config", k, v)
         self.g(out, "add", "."); self.g(out, "commit", "-q", "-m", "scaffold"); self.g(out, "push", "-q", "origin", "HEAD:main")
-        os.environ["PANDU_DIR"] = out
+        os.environ["KAIDAH_DIR"] = out
         i = self.add("agreed", "G", "--evidence", "https://example.com/d", "--expires", "2099-01-01"); run("sync")
         ci = os.path.join(self.t, "ci")
         self.g(self.t, "clone", "-q", self.bare, ci)
-        os.environ["PANDU_DIR"] = out
+        os.environ["KAIDAH_DIR"] = out
         run("correct", i, "--expires", "2099-02-01", "--public-ok"); run("sync")
-        os.environ["PANDU_DIR"] = ci
+        os.environ["KAIDAH_DIR"] = ci
         run("resolve", i, "revoked", "--public-ok"); run("sync")
         res = self.ci(ci)
         self.assertEqual(res[2][0], 1)  # check fails, so the run is red and GitHub notifies
 
     def test_private_log_cannot_sync(self):
-        os.environ["PANDU_DIR"] = self.A
+        os.environ["KAIDAH_DIR"] = self.A
         run("init", "--visibility", "private")
         run("add", "work", "private thing")
         c, o = run("sync"); self.assertNotEqual(c, 0); self.assertIn("PUBLIC log", o)
-        os.environ["PANDU_DIR"] = self.B  # no config at all is private too
+        os.environ["KAIDAH_DIR"] = self.B  # no config at all is private too
         run("add", "work", "private two")
         self.assertNotEqual(run("sync")[0], 0)
         self.assertEqual(self.remote_log(), "")
 
     def test_not_a_repo(self):
-        os.environ["PANDU_DIR"] = self.d.name
+        os.environ["KAIDAH_DIR"] = self.d.name
         run("init", "--visibility", "public")
         c, o = run("sync")
         self.assertNotEqual(c, 0)
