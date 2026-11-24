@@ -27,3 +27,7 @@ These notes grew from one person's experience working with an AI assistant on so
 ## How to use it
 
 Read the practices, copy the ones that fit, and change the rest. Open an issue or pull request if you have a better rule.
+
+---
+
+Built with AI assistance (Instinct and others). Not everything has been reviewed by Irvan.
