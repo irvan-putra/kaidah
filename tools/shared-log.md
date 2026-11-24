@@ -1,6 +1,6 @@
 # Keeping a public log in a GitHub data repository
 
-The tool in this folder is local. To share a **public** log of curated entries, put it in a dedicated data repository, not in this code repository. Real private entries never belong in either one.
+The tool in this folder is local. To share a **public** log of entries, put it in a dedicated data repository, not in this code repository. Real private entries never belong in either one.
 
 ## Layout
 
@@ -47,7 +47,7 @@ Recording an expiry does not remove access. That is a separate step done where t
 
 `kaidah scaffold DIR --kaidah-ref FULL_COMMIT_HASH` writes the starting files into an empty directory (only `.git` may exist) of a dedicated public repository, and commits nothing. It refuses to overwrite anything, and the repository starts with no entries:
 
-- `README.md`: says it is a curated public log, that nothing private is recorded, and that the expiry job removes no access.
+- `README.md`: says it is a public log written by AI (Instinct), that nothing private is recorded, and that the expiry job removes no access.
 - `kaidah.json`: `{"visibility": "public"}`.
 - `.gitignore`: keeps the local-only files out.
 - `.github/workflows/sweep.yml`: the scheduled job below.

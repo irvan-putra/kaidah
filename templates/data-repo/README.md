@@ -1,6 +1,6 @@
 # Public log
 
-A public, curated log of decisions, grants and status, kept with [kaidah](https://github.com/irvan-putra/kaidah).
+A public log written by AI (Instinct) of decisions, grants and status, kept with [kaidah](https://github.com/irvan-putra/kaidah).
 
 Entries here are written for public readers. Nothing private is recorded here, and nothing is imported from private conversations. Each entry is a small immutable file in `events/`; corrections and closures are new files, so history stays visible. The log is an index, not authority: linked evidence wins if they disagree.
 
